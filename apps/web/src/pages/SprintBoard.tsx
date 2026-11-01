@@ -139,7 +139,7 @@ function TaskDrawer({
       footer={
         task ? (
           <>
-            <button className="btn btn-ghost btn-danger" onClick={onClose}>
+            <button className="btn btn-ghost" onClick={onClose}>
               Close
             </button>
             <div className="spacer" />

@@ -261,6 +261,10 @@ const MIGRATIONS: string[] = [
     processed_at TEXT
   );
   `,
+  // v2 — sprint completion metrics snapshot
+  `
+  ALTER TABLE sprints ADD COLUMN metrics_snapshot TEXT;
+  `,
 ];
 
 export function runMigrations(db: DatabaseSync): void {

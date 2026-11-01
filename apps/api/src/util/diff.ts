@@ -92,17 +92,19 @@ export function unifiedDiff(path: string, before: string, after: string): string
         end++;
         continue;
       }
-      // look ahead: if another change within 6 lines, extend through context
+      // look ahead: if another change follows within 6 context lines, merge through
       let run = 0;
       let k = end + 1;
       while (k < ops.length && ops[k]!.type === 'same') {
         run++;
         k++;
       }
-      if (run <= 6 && k < ops.length) {
+      if (k < ops.length && run <= 6) {
         end = k - 1;
         continue;
       }
+      // trailing context: cap at 3 same lines
+      end = Math.min(end + 3, ops.length - 1);
       break;
     }
     const hunkOps = ops.slice(start, end + 1);

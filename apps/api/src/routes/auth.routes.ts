@@ -11,7 +11,7 @@ export const authRouter = Router();
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30 });
 
 authRouter.post(
-  '/register',
+  '/auth/register',
   authLimiter,
   asyncHandler(async (req, res) => {
     const input = parseBody(registerSchema, req.body);
@@ -20,7 +20,7 @@ authRouter.post(
 );
 
 authRouter.post(
-  '/login',
+  '/auth/login',
   authLimiter,
   asyncHandler(async (req, res) => {
     const input = parseBody(loginSchema, req.body);
@@ -29,7 +29,7 @@ authRouter.post(
 );
 
 authRouter.post(
-  '/logout',
+  '/auth/logout',
   requireAuth,
   asyncHandler(async (_req, res) => {
     // stateless JWT — client discards the token
@@ -38,7 +38,7 @@ authRouter.post(
 );
 
 authRouter.get(
-  '/me',
+  '/auth/me',
   requireAuth,
   asyncHandler(async (req, res) => {
     send(res, auth.getUser(req.userId!));
@@ -46,7 +46,7 @@ authRouter.get(
 );
 
 authRouter.patch(
-  '/me',
+  '/auth/me',
   requireAuth,
   asyncHandler(async (req, res) => {
     const schema = z.object({ name: z.string().trim().min(2).max(80) });

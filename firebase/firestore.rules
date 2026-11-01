@@ -1,0 +1,110 @@
+rules_version = '2';
+
+// DevFlow AI — Firestore security rules (prepared Firebase path).
+// Mirrors the REST API's ownership isolation: users may only touch data
+// inside workspaces/projects they own. Keep these rules in sync with
+// apps/api/src/services/* ownership checks if the Firebase path is enabled.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // Users: a user document is readable/writable only by its owner.
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Workspaces: owner-managed.
+    match /workspaces/{workspaceId} {
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.ownerId == request.auth.uid;
+
+      // Projects live under their workspace and are owner-scoped.
+      match /projects/{projectId} {
+        allow read, delete: if signedIn() && resource.data.ownerId == request.auth.uid;
+        allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid
+          && request.resource.data.status in ['planning', 'active', 'paused', 'archived']
+          && request.resource.data.name is string
+          && request.resource.data.name.size() >= 2
+          && request.resource.data.name.size() <= 120;
+        allow update: if signedIn() && resource.data.ownerId == request.auth.uid
+          && request.resource.data.ownerId == resource.data.ownerId
+          && request.resource.data.status in ['planning', 'active', 'paused', 'archived'];
+
+        // Epics: validated create/update, owner-scoped via parent project read.
+        match /epics/{epicId} {
+          allow read, write: if signedIn()
+            && get(/databases/$(database)/documents/workspaces/$(workspaceId)/projects/$(projectId)).data.ownerId == request.auth.uid
+            && request.resource.data.title is string;
+        }
+
+        // Stories: status constrained to the domain enum on create.
+        match /stories/{storyId} {
+          allow read, write: if signedIn()
+            && get(/databases/$(database)/documents/workspaces/$(workspaceId)/projects/$(projectId)).data.ownerId == request.auth.uid
+            && request.resource.data.status in ['backlog', 'todo', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled']
+            && request.resource.data.points is number
+            && request.resource.data.points >= 0
+            && request.resource.data.points <= 100;
+        }
+
+        match /tasks/{taskId} {
+          allow read, write: if signedIn()
+            && get(/databases/$(database)/documents/workspaces/$(workspaceId)/projects/$(projectId)).data.ownerId == request.auth.uid
+            && request.resource.data.status in ['backlog', 'todo', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled'];
+        }
+
+        match /sprints/{sprintId} {
+          allow read, write: if signedIn()
+            && get(/databases/$(database)/documents/workspaces/$(workspaceId)/projects/$(projectId)).data.ownerId == request.auth.uid
+            && request.resource.data.status in ['planned', 'active', 'completed', 'cancelled'];
+        }
+
+        match /drafts/{draftId} {
+          allow read, write: if signedIn()
+            && get(/databases/$(database)/documents/workspaces/$(workspaceId)/projects/$(projectId)).data.ownerId == request.auth.uid
+            && request.resource.data.status in ['draft', 'approved', 'rejected'];
+        }
+
+        match /executions/{executionId} {
+          allow read: if signedIn()
+            && get(/databases/$(database)/documents/workspaces/$(workspaceId)/projects/$(projectId)).data.ownerId == request.auth.uid;
+          // executions are system-written via the API; clients cannot create/modify them
+          allow create, update, delete: if false;
+        }
+
+        match /activity/{activityId} {
+          allow read: if signedIn()
+            && get(/databases/$(database)/documents/workspaces/$(workspaceId)/projects/$(projectId)).data.ownerId == request.auth.uid;
+          allow write: if false; // append-only via the API/server
+        }
+      }
+    }
+
+    // Conversations are top-level and user-scoped.
+    match /conversations/{conversationId} {
+      allow read, write: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+
+      match /messages/{messageId} {
+        allow read, create: if signedIn()
+          && get(/databases/$(database)/documents/conversations/$(conversationId)).data.userId == request.auth.uid;
+        allow update, delete: if false; // immutable transcript
+      }
+    }
+
+    // Server-managed collections: no direct client access.
+    match /usage_events/{id}    { allow read, write: if false; }
+    match /agent_runs/{id}      { allow read, write: if false; }
+    match /notifications/{id}   { allow read, write: if false; }
+    match /audit_log/{id}       { allow read, write: if false; }
+    match /webhook_events/{id}  { allow read, write: if false; }
+  }
+}

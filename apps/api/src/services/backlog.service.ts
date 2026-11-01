@@ -480,7 +480,7 @@ interface TransitionableRow {
 }
 
 function loadEntity(entityType: 'story' | 'task', entityId: string, projectId: string): TransitionableRow {
-  const table = entityType;
+  const table = entityType === 'story' ? 'stories' : 'tasks';
   const row = getDb()
     .prepare(`SELECT id, project_id, status, title FROM ${table} WHERE id = ? AND project_id = ?`)
     .get(entityId, projectId) as unknown as unknown as TransitionableRow | undefined;
@@ -497,7 +497,7 @@ export function transitionEntity(
 ): Story | Task {
   requireProject(projectId, userId);
   const toStatus = input.status;
-  const table = entityType;
+  const table = entityType === 'story' ? 'stories' : 'tasks';
 
   const result = withTransaction(() => {
     const row = loadEntity(entityType, entityId, projectId);

@@ -8,14 +8,14 @@ export const projectsRouter = Router();
 projectsRouter.use(requireAuth);
 
 projectsRouter.get(
-  '/',
+  '/projects',
   asyncHandler(async (req, res) => {
     send(res, projects.listProjects(req.userId!));
   })
 );
 
 projectsRouter.post(
-  '/',
+  '/projects',
   asyncHandler(async (req, res) => {
     const input = parseBody(createProjectSchema, req.body);
     send(res, projects.createProject(req.userId!, input));
@@ -23,14 +23,14 @@ projectsRouter.post(
 );
 
 projectsRouter.get(
-  '/:id',
+  '/projects/:id',
   asyncHandler(async (req, res) => {
-    send(res, projects.requireProject(req.params.id!, req.userId!));
+    send(res, projects.getProject(req.params.id!, req.userId!));
   })
 );
 
 projectsRouter.patch(
-  '/:id',
+  '/projects/:id',
   asyncHandler(async (req, res) => {
     const input = parseBody(updateProjectSchema, req.body);
     const id = req.params.id!;
@@ -39,7 +39,7 @@ projectsRouter.patch(
 );
 
 projectsRouter.delete(
-  '/:id',
+  '/projects/:id',
   asyncHandler(async (req, res) => {
     projects.deleteProject(req.params.id!, req.userId!);
     send(res, { ok: true });
@@ -47,7 +47,7 @@ projectsRouter.delete(
 );
 
 projectsRouter.get(
-  '/:id/activity',
+  '/projects/:id/activity',
   asyncHandler(async (req, res) => {
     const limit = Math.min(100, Number(req.query.limit ?? 50));
     send(res, projects.listActivity(req.params.id!, req.userId!, limit));

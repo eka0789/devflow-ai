@@ -275,17 +275,24 @@ export function GitHubPage(): JSX.Element {
   const repoConnected = Boolean(project?.repoFullName);
 
   const branches = useApi<GitHubBranch[]>(
-    () => api.get<GitHubBranch[]>(`/projects/${projectId}/github/branches`),
-    [projectId, repoConnected, connected],
+    () => (repoConnected ? api.get<GitHubBranch[]>(`/projects/${projectId}/github/branches`) : Promise.resolve([])),
+    [projectId, repoConnected],
   );
+  const branchList = branches.data ?? [];
+  const effectiveBranch = selectedBranch ?? project?.repoDefaultBranch ?? branchList[0]?.name ?? null;
+
   const commits = useApi<GitHubCommit[]>(
-    () => api.get<GitHubCommit[]>(`/projects/${projectId}/github/commits?branch=${encodeURIComponent(selectedBranch ?? '')}`),
-    [projectId, selectedBranch, repoConnected, connected],
+    () =>
+      repoConnected && effectiveBranch
+        ? api.get<GitHubCommit[]>(`/projects/${projectId}/github/commits?branch=${encodeURIComponent(effectiveBranch)}`)
+        : Promise.resolve([]),
+    [projectId, effectiveBranch, repoConnected],
   );
   const prs = useApi<GitHubPR[]>(
-    () => api.get<GitHubPR[]>(`/projects/${projectId}/github/prs`),
-    [projectId, repoConnected, connected],
+    () => (repoConnected ? api.get<GitHubPR[]>(`/projects/${projectId}/github/prs`) : Promise.resolve([])),
+    [projectId, repoConnected],
   );
+  const prList = prs.data ?? [];
 
   const disconnect = async (): Promise<void> => {
     try {
@@ -298,10 +305,18 @@ export function GitHubPage(): JSX.Element {
     }
   };
 
-  if (status.loading) {
+  if (status.loading || (ctx.loading && !ctx.project)) {
     return (
       <div className="page">
         <Skeleton height={300} style={{ borderRadius: 10 }} />
+      </div>
+    );
+  }
+
+  if (ctx.error) {
+    return (
+      <div className="page">
+        <ErrorState error={ctx.error} onRetry={ctx.reload} title="Failed to load project" />
       </div>
     );
   }
@@ -327,10 +342,6 @@ export function GitHubPage(): JSX.Element {
       </div>
     );
   }
-
-  const branchList = branches.data ?? [];
-  const effectiveBranch = selectedBranch ?? project?.repoDefaultBranch ?? branchList[0]?.name ?? null;
-  const prList = prs.data ?? [];
 
   return (
     <div className="page">

@@ -355,8 +355,8 @@ export function useProjectRequired(): ProjectCtx {
 // ================= Click outside =================
 
 /** Returns a ref; calls `onOutside` on mousedown outside the referenced element. */
-export function useClickOutside<T extends HTMLElement>(onOutside: () => void, active = true): RefObject<T | null> {
-  const ref = useRef<T | null>(null);
+export function useClickOutside<T extends HTMLElement>(onOutside: () => void, active = true): RefObject<T> {
+  const ref = useRef<T>(null);
   const cbRef = useRef(onOutside);
   cbRef.current = onOutside;
   useEffect(() => {

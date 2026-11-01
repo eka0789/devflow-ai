@@ -62,6 +62,11 @@ export function requireProject(projectId: string, userId: string): ProjectRow {
   return row;
 }
 
+/** Ownership-checked, API-shaped project (used by routes). */
+export function getProject(projectId: string, userId: string): Project {
+  return toProject(requireProject(projectId, userId));
+}
+
 export function createProject(
   userId: string,
   input: { name: string; description: string; techStack: string[] }

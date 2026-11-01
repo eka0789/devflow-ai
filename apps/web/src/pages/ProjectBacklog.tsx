@@ -131,6 +131,7 @@ function EpicModal({
 function StoryModal({
   open,
   story,
+  openNonce,
   initialEpicId,
   epics,
   projectId,
@@ -139,6 +140,7 @@ function StoryModal({
 }: {
   open: boolean;
   story: Story | null;
+  openNonce: number;
   initialEpicId: string | null;
   epics: Epic[];
   projectId: string;
@@ -155,8 +157,8 @@ function StoryModal({
   const [error, setError] = useState<string | null>(null);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
 
-  // Re-seed the form whenever the target story changes.
-  const seedKey = open ? (story?.id ?? 'new') : null;
+  // Re-seed the form whenever the modal is opened (nonce bumps per open).
+  const seedKey = open ? `${story?.id ?? 'new'}#${openNonce}` : null;
   if (seedKey && seedKey !== loadedFor) {
     setLoadedFor(seedKey);
     setTitle(story?.title ?? '');
@@ -624,11 +626,14 @@ export function ProjectBacklog(): JSX.Element {
   );
 
   const [epicModal, setEpicModal] = useState(false);
-  const [storyModal, setStoryModal] = useState<{ open: boolean; story: Story | null; epicId: string | null }>({
+  const [storyModal, setStoryModal] = useState<{ open: boolean; story: Story | null; epicId: string | null; nonce: number }>({
     open: false,
     story: null,
     epicId: null,
+    nonce: 0,
   });
+  const openStoryModal = (story: Story | null, epicId: string | null): void =>
+    setStoryModal((prev) => ({ open: true, story, epicId, nonce: prev.nonce + 1 }));
   const [taskModal, setTaskModal] = useState<{ open: boolean; storyId: string | null }>({ open: false, storyId: null });
   const [epicToDelete, setEpicToDelete] = useState<Epic | null>(null);
   const [storyToDelete, setStoryToDelete] = useState<Story | null>(null);
@@ -737,7 +742,7 @@ export function ProjectBacklog(): JSX.Element {
             <IconPlus size={14} />
             New epic
           </button>
-          <button className="btn btn-primary" onClick={() => setStoryModal({ open: true, story: null, epicId: null })}>
+          <button className="btn btn-primary" onClick={() => openStoryModal(null, null)}>
             <IconPlus size={14} />
             New story
           </button>
@@ -806,7 +811,7 @@ export function ProjectBacklog(): JSX.Element {
           description="Create your first epic and story manually, or launch the AI planning workflow to draft a full backlog from a product vision."
           action={
             <div className="row gap-2">
-              <button className="btn btn-primary" onClick={() => setStoryModal({ open: true, story: null, epicId: null })}>
+              <button className="btn btn-primary" onClick={() => openStoryModal(null, null)}>
                 <IconPlus size={14} />
                 New story
               </button>
@@ -828,7 +833,7 @@ export function ProjectBacklog(): JSX.Element {
                 </span>
                 <button
                   className="btn btn-ghost btn-sm"
-                  onClick={() => setStoryModal({ open: true, story: null, epicId: epic?.id ?? null })}
+                  onClick={() => openStoryModal(null, epic?.id ?? null)}
                   title={`Add story to ${epic ? epic.title : 'no epic'}`}
                 >
                   <IconPlus size={12} />
@@ -883,7 +888,7 @@ export function ProjectBacklog(): JSX.Element {
                           <StatusSelect value={story.status} onChange={(next) => void transition('stories', story.id, next)} />
                           <button
                             className="btn btn-ghost btn-sm btn-icon"
-                            onClick={() => setStoryModal({ open: true, story, epicId: null })}
+                            onClick={() => openStoryModal(story, null)}
                             aria-label={`Edit story ${story.title}`}
                           >
                             <IconEdit size={12} />
@@ -969,10 +974,11 @@ export function ProjectBacklog(): JSX.Element {
       <StoryModal
         open={storyModal.open}
         story={storyModal.story}
+        openNonce={storyModal.nonce}
         initialEpicId={storyModal.epicId}
         epics={epics}
         projectId={projectId}
-        onClose={() => setStoryModal({ open: false, story: null, epicId: null })}
+        onClose={() => setStoryModal((prev) => ({ ...prev, open: false }))}
         onSaved={reload}
       />
 

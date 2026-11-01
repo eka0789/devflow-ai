@@ -4,8 +4,8 @@
  */
 import { useEffect, useRef, useState, type JSX } from 'react';
 
-function useContainerWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
-  const ref = useRef<T | null>(null);
+function useContainerWidth<T extends HTMLElement>(): [React.RefObject<T>, number] {
+  const ref = useRef<T>(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {
     const el = ref.current;
@@ -279,6 +279,11 @@ export function Donut({
   centerLabel?: string;
   centerSub?: string;
 }): JSX.Element {
+  const resolveColor = (c: string): string => {
+    if (c in PALETTE) return PALETTE[c as ChartColor];
+    if (c.startsWith('--')) return `var(${c})`;
+    return c;
+  };
   const total = segments.reduce((sum, s) => sum + s.value, 0);
   const r = (size - thickness) / 2;
   const c = 2 * Math.PI * r;
@@ -299,7 +304,7 @@ export function Donut({
                 cy={size / 2}
                 r={r}
                 fill="none"
-                stroke={seg.color.startsWith('--') ? `var(${seg.color})` : seg.color}
+                stroke={resolveColor(seg.color)}
                 strokeWidth={thickness}
                 strokeDasharray={`${dash} ${c - dash}`}
                 strokeDashoffset={-offset}
@@ -333,10 +338,7 @@ export function Donut({
       <div className="stack gap-2" style={{ minWidth: 140 }}>
         {segments.map((seg, i) => (
           <div key={i} className="row gap-2" style={{ fontSize: 12.5 }}>
-            <span
-              className="legend-swatch"
-              style={{ background: seg.color.startsWith('--') ? `var(${seg.color})` : seg.color }}
-            />
+            <span className="legend-swatch" style={{ background: resolveColor(seg.color) }} />
             <span className="muted flex-1">{seg.label}</span>
             <span className="weight-600 tabular">{seg.value.toLocaleString('en-US')}</span>
             {total > 0 ? <span className="faint tabular" style={{ width: 42, textAlign: 'right' }}>{Math.round((seg.value / total) * 100)}%</span> : null}

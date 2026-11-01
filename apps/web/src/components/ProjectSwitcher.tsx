@@ -10,7 +10,7 @@ import { Modal } from './Modal';
 import { Skeleton } from './Skeleton';
 import { IconChevronDown, IconFolder, IconPlus } from './icons';
 
-function colorFor(name: string): string {
+export function colorFor(name: string): string {
   const palette = ['#6e7bff', '#9b6eff', '#4cc2ff', '#3fb68b', '#e0a458', '#e5484d', '#f171a1'];
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;

@@ -253,6 +253,10 @@ export function completeSprint(projectId: string, sprintId: string, userId: stri
   const db = getDb();
   const ts = nowIso();
 
+  // snapshot metrics BEFORE the carry-over: unfinished stories lose their
+  // sprint_id below, which would otherwise shrink the totals permanently
+  const metrics = computeSprintMetrics(row);
+
   withTransaction(() => {
     db.prepare("UPDATE sprints SET status = 'completed', completed_at = ? WHERE id = ?").run(ts, sprintId);
     // carry over: stories that did not finish return to the backlog
@@ -270,13 +274,11 @@ export function completeSprint(projectId: string, sprintId: string, userId: stri
     }
   });
 
-  const completedRow = getSprintRow(sprintId, projectId);
-  const metrics = computeSprintMetrics(completedRow);
   db.prepare('UPDATE sprints SET metrics_snapshot = ? WHERE id = ?').run(JSON.stringify(metrics), sprintId);
-
   recordActivity(projectId, userId, 'sprint.completed', `Sprint "${row.name}" completed — ${metrics.donePoints}/${metrics.totalPoints} pts done`);
   notify(userId, 'sprint.completed', 'Sprint completed', `"${row.name}" finished with ${metrics.completionRate}% completion.`);
-  return metrics;
+  // return the snapshot with the completed sprint identity
+  return { ...metrics, sprint: toSprint(getSprintRow(sprintId, projectId)) };
 }
 
 export function getVelocity(projectId: string, userId: string): VelocityPoint[] {

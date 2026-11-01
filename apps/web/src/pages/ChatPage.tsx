@@ -43,6 +43,13 @@ export function ChatPage(): JSX.Element {
     if (conv.data) setMessages(conv.data.messages);
   }, [conv.data]);
 
+  // Reset transient state when switching conversations.
+  useEffect(() => {
+    setMessages([]);
+    setStreamText(null);
+    setStreamError(null);
+  }, [activeId]);
+
   // Stop any in-flight stream when switching conversations or unmounting.
   useEffect(() => {
     return () => {

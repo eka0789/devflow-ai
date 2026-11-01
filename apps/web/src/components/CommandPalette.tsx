@@ -74,16 +74,16 @@ export function CommandPalette(): JSX.Element {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        setOpen((o) => {
-          if (o) return false;
+        if (open) {
+          setOpen(false);
+        } else {
           openPalette();
-          return true;
-        });
+        }
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openPalette]);
+  }, [openPalette, open]);
 
   useEffect(() => {
     const handler = (): void => openPalette();

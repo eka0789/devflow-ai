@@ -159,6 +159,7 @@ export async function apiStream(path: string, body: unknown, handlers: StreamHan
     try {
       read = await reader.read();
     } catch {
+      if (handlers.signal?.aborted) return; // user pressed stop — not an error
       handlers.onError({ code: 'NETWORK_ERROR', message: 'Stream interrupted. Try sending the message again.' });
       return;
     }

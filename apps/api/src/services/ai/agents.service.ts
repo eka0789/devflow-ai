@@ -198,7 +198,7 @@ export function startWorkflow(
   userId: string,
   workflow: WorkflowId,
   vision: string
-): RunRow {
+): AgentRun {
   requireProject(projectId, userId);
   const db = getDb();
   const running = db
@@ -223,7 +223,7 @@ export function startWorkflow(
     );
   });
 
-  return getRunRow(id);
+  return serializeRun(getRunRow(id) as unknown as Record<string, unknown>);
 }
 
 async function executeWorkflow(
