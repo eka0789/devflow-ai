@@ -9,6 +9,7 @@ import { recordActivity } from './events.service.js';
 import { requireProject } from './projects.service.js';
 import type {
   BacklogStatus,
+  Comment,
   CreateEpicInput,
   CreateStoryInput,
   CreateTaskInput,
@@ -341,6 +342,7 @@ export interface TaskDetail {
   story: Story;
   subtasks: Subtask[];
   dependencies: Task[];
+  comments: Comment[];
 }
 
 export function getTaskDetail(projectId: string, taskId: string, userId: string): TaskDetail {
@@ -355,11 +357,25 @@ export function getTaskDetail(projectId: string, taskId: string, userId: string)
       'SELECT t.* FROM task_dependencies d JOIN tasks t ON t.id = d.depends_on_task_id WHERE d.task_id = ?'
     )
     .all(taskId) as unknown as TaskRow[];
+  const commentRows = getDb()
+    .prepare(
+      'SELECT c.*, u.name AS user_name FROM comments c LEFT JOIN users u ON u.id = c.user_id WHERE c.task_id = ? ORDER BY c.created_at, c.rowid LIMIT 500'
+    )
+    .all(taskId) as unknown as Array<{ id: string; task_id: string; project_id: string; user_id: string; body: string; created_at: string; user_name: string | null }>;
   return {
     task: toTask(taskRow),
     story: toStory(storyRow),
     subtasks: subtaskRows.map(toSubtask),
     dependencies: depRows.map(toTask),
+    comments: commentRows.map((c) => ({
+      id: c.id,
+      taskId: c.task_id,
+      projectId: c.project_id,
+      userId: c.user_id,
+      userName: c.user_name,
+      body: c.body,
+      createdAt: c.created_at,
+    })),
   };
 }
 

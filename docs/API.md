@@ -180,6 +180,46 @@ Webhook receiver (no bearer auth; HMAC-validated):
 
 Execution prerequisites (`EXECUTION_NOT_READY` lists what's missing): AI provider configured, repo connected, task in `todo`/`in_progress`, no in-flight execution for the task.
 
+## Search (global)
+
+| Method | Path | Query | Returns |
+|---|---|---|---|
+| GET | `/search` | `q` (required, matched literally), `limit` (default 8, max 20) | `SearchResults {projects, stories, tasks}` — ownership-scoped; LIKE wildcards in `q` are escaped |
+
+The command palette (Ctrl+K) calls this endpoint debounced for queries ≥ 2 chars.
+
+## Task comments
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/projects/:projectId/tasks/:id/comments` | — | `Comment[]` (joined with author name) |
+| POST | `/projects/:projectId/tasks/:id/comments` | `{body}` (1–4000 chars) | `Comment` |
+| DELETE | `/projects/:projectId/tasks/:id/comments/:commentId` | — | `{ok:true}` (404 unless the comment is yours) |
+
+`GET /projects/:projectId/tasks/:id` now also returns `comments` inside the detail payload. Comment creation records project activity.
+
+## Sprint review & retrospective
+
+| Method | Path | Returns |
+|---|---|---|
+| POST | `/projects/:projectId/sprints/:id/review` | `AgentRun` (workflow `sprint_review`) |
+
+Grounded in the completed sprint's frozen metrics snapshot (committed/completed points, carried-over story count, AI execution outcomes during the sprint window). Produces a `sprint_review` draft (markdown) in the planning drafts list. `409 CONFLICT` if the sprint is not completed.
+
+## Project export
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/projects/:id/export` | `ProjectExport` — `format: 'devflow-project/v1'` with project meta, epics, stories (acceptance criteria parsed), tasks + subtasks, sprints (committed/completed points from frozen snapshots when available), and dependency pairs. Contains no secret material. |
+
+## Execution retry
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/executions/:id/retry` | `{createPR?}` (default true) | new `Execution` (queued) |
+
+Allowed when the original execution is `failed`, `awaiting_review` or `cancelled`. Enforces the same requirement checks as a fresh execution (AI configured, repo connected, GitHub token, no execution in flight) **except** the task-status gate — the task may legitimately sit in `in_review` after a prior attempt. `409 EXECUTION_NOT_READY` with `details.missing` lists anything absent; `409 CONFLICT` for non-retryable statuses.
+
 ## Notifications
 
 | Method | Path | Returns |

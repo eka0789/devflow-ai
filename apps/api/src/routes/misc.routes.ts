@@ -3,6 +3,7 @@ import { asyncHandler, parseBody, send } from '../util/http.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getDashboardStats } from '../services/analytics.service.js';
 import { listGlobalActivity } from '../services/projects.service.js';
+import { searchAll } from '../services/search.service.js';
 import { getDb } from '../db/database.js';
 import { verifySignature, processWebhook } from '../services/github/webhooks.service.js';
 import { AppError } from '../util/appError.js';
@@ -19,6 +20,15 @@ authed.get(
   '/dashboard',
   asyncHandler(async (req, res) => {
     send(res, getDashboardStats(req.userId!));
+  })
+);
+
+authed.get(
+  '/search',
+  asyncHandler(async (req, res) => {
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    const limit = Math.min(20, Math.max(1, Number(req.query.limit ?? 8)));
+    send(res, searchAll(req.userId!, q, limit));
   })
 );
 

@@ -136,6 +136,17 @@ export interface StatusEvent {
   createdAt: string;
 }
 
+/** Discussion thread attached to a task. */
+export interface Comment {
+  id: string;
+  taskId: string;
+  projectId: string;
+  userId: string;
+  userName: string | null;
+  body: string;
+  createdAt: string;
+}
+
 // ---------- Sprints ----------
 
 export type SprintStatus = 'planned' | 'active' | 'completed' | 'cancelled';
@@ -202,7 +213,7 @@ export type AgentRole =
   | 'qa_engineer'
   | 'technical_writer';
 
-export type DraftType = 'prd' | 'tech_plan' | 'backlog' | 'roadmap';
+export type DraftType = 'prd' | 'tech_plan' | 'backlog' | 'roadmap' | 'sprint_review';
 export type DraftStatus = 'draft' | 'approved' | 'rejected';
 
 export interface Draft {
@@ -388,6 +399,13 @@ export interface DashboardStats {
   executionsThisMonth: number;
   tokensThisMonth: number;
   prsOpen: number;
+}
+
+/** Cross-project search results (all ownership-scoped). */
+export interface SearchResults {
+  projects: Project[];
+  stories: Story[];
+  tasks: Task[];
 }
 
 export interface VelocityPoint {

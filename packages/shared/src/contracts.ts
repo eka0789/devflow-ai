@@ -105,6 +105,10 @@ export const addDependencySchema = z.object({
   dependsOnId: z.string().uuid(),
 });
 
+export const createCommentSchema = z.object({
+  body: z.string().trim().min(1).max(4000),
+});
+
 // ---------- sprints ----------
 
 export const createSprintSchema = z.object({
@@ -141,7 +145,13 @@ export const aiSettingsSchema = z.object({
 export type AISettingsUpdateInput = z.infer<typeof aiSettingsSchema>;
 
 export const runWorkflowSchema = z.object({
-  workflow: z.enum(['full_planning', 'prd_only', 'tech_plan_only', 'backlog_only']),
+  workflow: z.enum([
+    'full_planning',
+    'prd_only',
+    'tech_plan_only',
+    'backlog_only',
+    'sprint_review',
+  ]),
   vision: z.string().trim().min(10).max(8000),
 });
 

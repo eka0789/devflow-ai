@@ -106,6 +106,8 @@ export function getAIUsage(userId: string, days: number): AIUsageStats {
 
 export function getExecutionStats(userId: string, projectId: string | null): ExecutionStats {
   const db = getDb();
+  // ownership: foreign project ids are rejected, never silently scoped
+  if (projectId) requireProject(projectId, userId);
   const scope = projectId ? 'AND e.project_id = ?' : 'AND p.owner_user_id = ?';
   const scopeParam = projectId ?? userId;
 

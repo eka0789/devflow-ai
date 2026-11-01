@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { asyncHandler, parseBody, send } from '../util/http.js';
 import { requireAuth } from '../middleware/auth.js';
 import * as sprints from '../services/sprints.service.js';
+import * as agents from '../services/ai/agents.service.js';
 
 export const sprintsRouter = Router();
 sprintsRouter.use(requireAuth);
@@ -69,6 +70,14 @@ sprintsRouter.delete(
     parseBody(sprintIdParam, req.params);
     sprints.unassignStory(req.params.projectId!, req.params.id!, req.params.storyId!, req.userId!);
     send(res, { ok: true });
+  })
+);
+
+sprintsRouter.post(
+  '/projects/:projectId/sprints/:id/review',
+  asyncHandler(async (req, res) => {
+    parseBody(sprintIdParam, req.params);
+    send(res, agents.startSprintReview(req.params.projectId!, req.params.id!, req.userId!));
   })
 );
 

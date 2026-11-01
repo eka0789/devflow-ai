@@ -16,6 +16,7 @@ import * as agents from '../services/ai/agents.service.js';
 import * as drafts from '../services/drafts.service.js';
 import { getAIUsage } from '../services/analytics.service.js';
 import { AppError } from '../util/appError.js';
+import { requireProject } from '../services/projects.service.js';
 
 export const aiRouter = Router();
 aiRouter.use(requireAuth);
@@ -157,9 +158,10 @@ aiRouter.post(
 aiRouter.get(
   '/projects/:projectId/agent-runs/:runId',
   asyncHandler(async (req, res) => {
+    requireProject(req.params.projectId!, req.userId!);
     const row = (await import('../db/database.js')).getDb()
-      .prepare('SELECT * FROM agent_runs WHERE id = ? AND project_id = ?')
-      .get(req.params.runId!, req.params.projectId!) as Record<string, unknown> | undefined;
+      .prepare('SELECT * FROM agent_runs WHERE id = ? AND project_id = ? AND user_id = ?')
+      .get(req.params.runId!, req.params.projectId!, req.userId!) as Record<string, unknown> | undefined;
     if (!row) throw AppError.notFound('Agent run');
     send(res, agents.serializeRun(row));
   })
@@ -169,11 +171,12 @@ aiRouter.get(
   '/projects/:projectId/agent-runs',
   asyncHandler(async (req, res) => {
     parseBody(projectIdParam, req.params);
+    requireProject(req.params.projectId!, req.userId!);
     const db = (await import('../db/database.js')).getDb();
     const limit = Math.min(50, Number(req.query.limit ?? 20));
     const rows = db
-      .prepare('SELECT * FROM agent_runs WHERE project_id = ? ORDER BY created_at DESC LIMIT ?')
-      .all(req.params.projectId!, limit) as Array<Record<string, unknown>>;
+      .prepare('SELECT * FROM agent_runs WHERE project_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?')
+      .all(req.params.projectId!, req.userId!, limit) as Array<Record<string, unknown>>;
     send(res, rows.map(agents.serializeRun));
   })
 );

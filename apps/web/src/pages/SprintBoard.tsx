@@ -1,8 +1,8 @@
 import { useState, type JSX } from 'react';
-import type { BacklogStatus, Priority, Sprint, Subtask, Task } from '@devflow/shared';
+import type { BacklogStatus, Comment, Priority, Sprint, Subtask, Task } from '@devflow/shared';
 import { VALID_TRANSITIONS } from '@devflow/shared';
 import { api } from '../lib/api';
-import { titleCase, useApi, useProjectRequired, useToast } from '../lib/hooks';
+import { formatRelative, titleCase, useApi, useAuth, useProjectRequired, useToast } from '../lib/hooks';
 import { normalizeTaskDetail, type BoardPayload, type BoardTask, type TaskDetailPayload } from '../lib/types';
 import { PriorityBadge, StatusBadge } from '../components/Badge';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -108,6 +108,36 @@ function TaskDrawer({
       reload();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete subtask');
+    }
+  };
+
+  const comments: Comment[] = data?.comments ?? [];
+  const { user: authUser } = useAuth();
+  const [newComment, setNewComment] = useState('');
+  const [commentBusy, setCommentBusy] = useState(false);
+
+  const addComment = async (): Promise<void> => {
+    const body = newComment.trim();
+    if (!task || body.length === 0) return;
+    setCommentBusy(true);
+    try {
+      await api.post(`/projects/${projectId}/tasks/${task.id}/comments`, { body });
+      setNewComment('');
+      reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to post comment');
+    } finally {
+      setCommentBusy(false);
+    }
+  };
+
+  const deleteComment = async (commentId: string): Promise<void> => {
+    if (!task) return;
+    try {
+      await api.del(`/projects/${projectId}/tasks/${task.id}/comments/${commentId}`);
+      reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete comment');
     }
   };
 
@@ -295,6 +325,65 @@ function TaskDrawer({
                 ))}
               </div>
             )}
+          </div>
+
+          <div className="stack gap-2">
+            <div className="uppercase-label">Comments ({comments.length})</div>
+            {comments.length === 0 ? (
+              <div className="faint text-sm">No comments yet — start the discussion.</div>
+            ) : (
+              <div className="stack gap-2">
+                {comments.map((c) => (
+                  <div key={c.id} className="card" style={{ padding: '8px 12px' }}>
+                    <div className="row gap-2" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <span className="weight-600 text-sm">{c.userName ?? 'Unknown'}</span>
+                      <span className="faint text-sm">{formatRelative(c.createdAt)}</span>
+                    </div>
+                    <div className="text-sm" style={{ whiteSpace: 'pre-wrap', marginTop: 2 }}>
+                      {c.body}
+                    </div>
+                    {authUser && c.userId === authUser.id ? (
+                      <div className="row justify-end" style={{ marginTop: 4 }}>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          style={{ color: 'var(--danger)' }}
+                          onClick={() => void deleteComment(c.id)}
+                          aria-label="Delete comment"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="stack gap-2">
+              <textarea
+                className="input"
+                rows={2}
+                placeholder="Add a comment…"
+                value={newComment}
+                maxLength={4000}
+                onChange={(e) => setNewComment(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    void addComment();
+                  }
+                }}
+              />
+              <div className="row justify-end">
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => void addComment()}
+                  disabled={commentBusy || newComment.trim().length === 0}
+                >
+                  {commentBusy ? <span className="spinner" /> : null}
+                  Comment
+                </button>
+              </div>
+            </div>
           </div>
 
         </>

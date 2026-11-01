@@ -248,6 +248,18 @@ export function SprintPage(): JSX.Element {
   const [completing, setCompleting] = useState<Sprint | null>(null);
   const [busySprint, setBusySprint] = useState<string | null>(null);
 
+  const generateReview = async (sprint: Sprint): Promise<void> => {
+    setBusySprint(sprint.id);
+    try {
+      await api.post(`/projects/${projectId}/sprints/${sprint.id}/review`);
+      toast.success(`Sprint review draft for "${sprint.name}" is ready — open AI Planning to view and approve`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to generate sprint review');
+    } finally {
+      setBusySprint(null);
+    }
+  };
+
   const activate = async (sprint: Sprint): Promise<void> => {
     setBusySprint(sprint.id);
     try {
@@ -364,6 +376,16 @@ export function SprintPage(): JSX.Element {
                     {sprint.status === 'active' ? (
                       <button className="btn btn-sm" style={{ borderColor: 'var(--success)', color: 'var(--success)' }} onClick={() => setCompleting(sprint)}>
                         Complete sprint
+                      </button>
+                    ) : null}
+                    {sprint.status === 'completed' ? (
+                      <button
+                        className="btn btn-sm"
+                        disabled={busySprint === sprint.id}
+                        onClick={() => void generateReview(sprint)}
+                        title="Generate a review & retrospective draft from this sprint's real metrics"
+                      >
+                        AI sprint review
                       </button>
                     ) : null}
                     <button

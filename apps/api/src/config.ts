@@ -58,6 +58,8 @@ export interface Config {
   envAI: EnvAIConfig | null;
   logLevel: string;
   isProd: boolean;
+  /** Set TRUST_PROXY=true ONLY behind a proxy that overwrites X-Forwarded-For. */
+  trustProxy: boolean;
 }
 
 function parseList(raw: string | undefined, fallback: string[]): string[] {
@@ -105,4 +107,5 @@ export const config: Config = {
   envAI: envAIConfig,
   logLevel: (process.env.LOG_LEVEL ?? 'info').trim(),
   isProd: process.env.NODE_ENV === 'production',
+  trustProxy: process.env.TRUST_PROXY === 'true',
 };

@@ -12,9 +12,9 @@ import { AppError } from '../util/appError.js';
 import { ErrorCodes } from '@devflow/shared';
 
 export const githubRouter = Router();
-githubRouter.use(requireAuth);
-
 const githubLimiter = rateLimit({ windowMs: 60 * 1000, max: 60, keyOf: (req) => req.userId ?? req.ip ?? 'anon' });
+githubRouter.use(requireAuth);
+githubRouter.use(githubLimiter);
 const projectIdParam = z.object({ projectId: z.string().uuid() });
 const prNumberParams = z.object({ projectId: z.string().uuid(), number: z.coerce.number().int().positive() });
 
@@ -29,7 +29,6 @@ function clientOrThrow(userId: string, repoFullName: string | null | undefined):
   return { client: new GitHubClient(token), repo: repoFullName };
 }
 
-void githubLimiter;
 
 githubRouter.get(
   '/github/status',

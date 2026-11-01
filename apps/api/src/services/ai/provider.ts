@@ -15,7 +15,7 @@ export interface ChatRequest {
   temperature?: number;
   maxTokens?: number;
   /** Hint used only by the MockProvider to emit schema-valid test payloads. */
-  mockKind?: 'chat' | 'prd' | 'tech_plan' | 'backlog';
+  mockKind?: 'chat' | 'prd' | 'tech_plan' | 'backlog' | 'sprint_review';
 }
 
 export interface ChatResult {
@@ -38,6 +38,44 @@ export interface AIProvider {
 
 const RETRY_STATUS = new Set([408, 409, 429, 500, 502, 503, 504]);
 
+/**
+ * SSRF guard: the provider fetches a user-supplied URL, so private network
+ * targets are rejected. Local LLM setups (Ollama/vLLM) can opt in with
+ * ALLOW_PRIVATE_AI_HOSTS=true — documented in docs/SETUP_AI.md.
+ */
+const PRIVATE_HOSTNAME =
+  /^(localhost|.*\.local|.*\.internal|127\.[0-9.]+|10\.[0-9.]+|192\.168\.[0-9.]+|169\.254\.[0-9.]+|0\.0\.0\.0|\[?::1\]?)$/i;
+const PRIVATE_IPV4 = /^(10\.|127\.|192\.168\.|169\.254\.|0\.)/;
+const PRIVATE_IPV4_RANGE_172 = /^172\.(1[6-9]|2[0-9]|3[01])\./;
+
+export function assertPublicAiUrl(rawUrl: string): URL {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new AppError(400, ErrorCodes.VALIDATION_FAILED, 'AI base URL is not a valid URL');
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new AppError(400, ErrorCodes.VALIDATION_FAILED, 'AI base URL must use http or https');
+  }
+  const host = url.hostname;
+  const allowPrivate = process.env.ALLOW_PRIVATE_AI_HOSTS === 'true';
+  if (!allowPrivate) {
+    const ipv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(host);
+    const privateHit =
+      PRIVATE_HOSTNAME.test(host) ||
+      (ipv4 && (PRIVATE_IPV4.test(host) || PRIVATE_IPV4_RANGE_172.test(host)));
+    if (privateHit) {
+      throw new AppError(
+        400,
+        ErrorCodes.VALIDATION_FAILED,
+        'AI base URL points at a private/loopback address. For local LLMs set ALLOW_PRIVATE_AI_HOSTS=true in the server environment.'
+      );
+    }
+  }
+  return url;
+}
+
 export class OpenAICompatibleProvider implements AIProvider {
   readonly name = 'openai-compatible';
 
@@ -55,7 +93,9 @@ export class OpenAICompatibleProvider implements AIProvider {
       signal.addEventListener('abort', () => controller.abort(), { once: true });
     }
     try {
+      assertPublicAiUrl(this.baseUrl); // re-checked per request (env may change in tests)
       const res = await fetch(`${this.baseUrl}/chat/completions`, {
+        redirect: 'manual',
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -276,6 +316,22 @@ function mockContent(req: ChatRequest): string {
           },
         ],
       });
+    case 'sprint_review':
+      return [
+        '# Sprint Review & Retrospective',
+        '',
+        '## Sprint Review',
+        '',
+        'Based on the sprint data below, summarize what was delivered and what was not.',
+        '',
+        vision.slice(0, 1500),
+        '',
+        '## Retrospective',
+        '',
+        '- What went well: items with completed points above.',
+        '- What to improve: carried-over stories indicate over-commitment; scope the next sprint tighter.',
+        '- Actions: split large stories before planning; keep AI executions small and reviewed.',
+      ].join('\n');
     default:
       return `Mock AI response (no provider configured). You said: "${vision.slice(0, 200)}". Configure a real AI provider in Settings → AI Provider to get genuine completions.`;
   }

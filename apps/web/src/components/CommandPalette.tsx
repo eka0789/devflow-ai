@@ -1,7 +1,7 @@
 /** Ctrl+K command palette: fuzzy navigation + project switching. */
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { Project } from '@devflow/shared';
+import type { Project, SearchResults } from '@devflow/shared';
 import { api } from '../lib/api';
 import { useProject } from '../lib/hooks';
 import { colorFor } from './ProjectSwitcher';
@@ -55,6 +55,9 @@ export function CommandPalette(): JSX.Element {
   const [query, setQuery] = useState('');
   const [activeIdx, setActiveIdx] = useState(0);
   const [projects, setProjects] = useState<Project[] | null>(null);
+  const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
+  const [searching, setSearching] = useState(false);
+  const searchSeq = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -63,6 +66,8 @@ export function CommandPalette(): JSX.Element {
   const openPalette = useCallback(() => {
     setQuery('');
     setActiveIdx(0);
+    setSearchResults(null);
+    setSearching(false);
     setOpen(true);
     api
       .get<Project[]>('/projects')
@@ -94,6 +99,35 @@ export function CommandPalette(): JSX.Element {
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
+
+  // debounced backend search (fires once the query is at least 2 characters)
+  useEffect(() => {
+    const q = query.trim();
+    if (!open || q.length < 2) {
+      setSearchResults(null);
+      setSearching(false);
+      return;
+    }
+    const seq = ++searchSeq.current;
+    setSearching(true);
+    const timer = setTimeout(() => {
+      api
+        .get<SearchResults>(`/search?q=${encodeURIComponent(q)}&limit=6`)
+        .then((r) => {
+          if (searchSeq.current === seq) {
+            setSearchResults(r);
+            setSearching(false);
+          }
+        })
+        .catch(() => {
+          if (searchSeq.current === seq) {
+            setSearchResults(null);
+            setSearching(false);
+          }
+        });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [query, open]);
 
   const go = useCallback(
     (path: string) => {
@@ -152,6 +186,48 @@ export function CommandPalette(): JSX.Element {
       .map((x) => x.c);
   }, [commands, query]);
 
+  // backend search results are appended verbatim (they already match the query)
+  const searchCommands = useMemo<Command[]>(() => {
+    const out: Command[] = [];
+    for (const p of searchResults?.projects ?? []) {
+      out.push({
+        id: `sr-p-${p.id}`,
+        label: p.name,
+        group: 'Search results',
+        icon: (
+          <span className="ps-avatar" style={{ width: 16, height: 16, fontSize: 8, background: colorFor(p.name) }}>
+            {p.name.slice(0, 1).toUpperCase()}
+          </span>
+        ),
+        sub: 'Project',
+        run: () => go(`/projects/${p.id}`),
+      });
+    }
+    for (const st of searchResults?.stories ?? []) {
+      out.push({
+        id: `sr-s-${st.id}`,
+        label: st.title,
+        group: 'Search results',
+        icon: <IconList size={15} />,
+        sub: `Story · ${st.status}`,
+        run: () => go(`/projects/${st.projectId}/backlog`),
+      });
+    }
+    for (const t of searchResults?.tasks ?? []) {
+      out.push({
+        id: `sr-t-${t.id}`,
+        label: t.title,
+        group: 'Search results',
+        icon: <IconZap size={15} />,
+        sub: `Task · ${t.status}`,
+        run: () => go(`/projects/${t.projectId}/board`),
+      });
+    }
+    return out;
+  }, [searchResults, go]);
+
+  const items = useMemo(() => [...filtered, ...searchCommands], [filtered, searchCommands]);
+
   useEffect(() => {
     setActiveIdx(0);
   }, [query]);
@@ -189,13 +265,13 @@ export function CommandPalette(): JSX.Element {
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown') {
               e.preventDefault();
-              setActiveIdx((i) => Math.min(i + 1, filtered.length - 1));
+              setActiveIdx((i) => Math.min(i + 1, items.length - 1));
             } else if (e.key === 'ArrowUp') {
               e.preventDefault();
               setActiveIdx((i) => Math.max(i - 1, 0));
             } else if (e.key === 'Enter') {
               e.preventDefault();
-              const cmd = filtered[activeIdx];
+              const cmd = items[activeIdx];
               if (cmd) execute(cmd);
             } else if (e.key === 'Escape') {
               setOpen(false);
@@ -203,10 +279,11 @@ export function CommandPalette(): JSX.Element {
           }}
         />
         <div className="cp-list" ref={listRef}>
-          {filtered.length === 0 ? (
-            <div className="cp-empty">No matching commands</div>
+          {searching ? <div className="cp-group-label">Searching…</div> : null}
+          {items.length === 0 ? (
+            <div className="cp-empty">{searching ? 'Searching…' : 'No matching commands'}</div>
           ) : (
-            filtered.map((cmd, idx) => {
+            items.map((cmd, idx) => {
               const showGroup = cmd.group !== lastGroup;
               lastGroup = cmd.group;
               return (

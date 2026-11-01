@@ -1,5 +1,5 @@
 /** Client-side view models for composite API payloads. */
-import type { Epic, Sprint, Story, Subtask, Task } from '@devflow/shared';
+import type { Comment, Epic, Sprint, Story, Subtask, Task } from '@devflow/shared';
 
 export interface BacklogTree {
   epics: Epic[];
@@ -28,6 +28,7 @@ export interface TaskDetailPayload {
   story: Story;
   subtasks: Subtask[];
   dependencies: Array<[string, string]>; // [taskId, dependsOnTaskId]
+  comments: Comment[];
 }
 
 function asPairs(raw: unknown, selfKey: string, depKey: string): Array<[string, string]> {
@@ -68,5 +69,6 @@ export function normalizeTaskDetail(raw: unknown): TaskDetailPayload {
     story: obj.story as Story,
     subtasks: Array.isArray(obj.subtasks) ? (obj.subtasks as Subtask[]) : [],
     dependencies: asPairs(obj.dependencies, 'taskId', 'dependsOnTaskId'),
+    comments: Array.isArray(obj.comments) ? (obj.comments as Comment[]) : [],
   };
 }

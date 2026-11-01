@@ -10,12 +10,15 @@ import { aiRouter } from './routes/ai.routes.js';
 import { githubRouter } from './routes/github.routes.js';
 import { executionsRouter } from './routes/executions.routes.js';
 import { authedMiscRouter, webhooksRouter } from './routes/misc.routes.js';
+import { config } from './config.js';
 import { logger } from './util/logger.js';
 
 export function createApp(): express.Express {
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 1);
+  // X-Forwarded-For is client-controlled; only honor it behind a real proxy,
+  // otherwise the IP-keyed rate limiter can be bypassed via header spoofing.
+  if (config.trustProxy) app.set('trust proxy', 1);
 
   app.use(securityHeaders);
   app.use(cors);

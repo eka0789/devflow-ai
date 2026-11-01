@@ -265,6 +265,19 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE sprints ADD COLUMN metrics_snapshot TEXT;
   `,
+
+  // v3 — task comments
+  `
+  CREATE TABLE IF NOT EXISTS comments (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_comments_task ON comments(task_id);
+  `,
 ];
 
 export function runMigrations(db: DatabaseSync): void {

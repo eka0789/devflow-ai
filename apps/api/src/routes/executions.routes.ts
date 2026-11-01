@@ -48,6 +48,15 @@ executionsRouter.get(
 );
 
 executionsRouter.post(
+  '/executions/:id/retry',
+  asyncHandler(async (req, res) => {
+    const input = parseBody(z.object({ createPR: z.boolean().optional() }), req.body ?? {});
+    const id = z.string().uuid().parse(req.params.id);
+    send(res, pipeline.retryExecution(id, req.userId!, input.createPR ?? true));
+  })
+);
+
+executionsRouter.post(
   '/executions/:id/cancel',
   asyncHandler(async (req, res) => {
     const id = z.string().uuid().parse(req.params.id);

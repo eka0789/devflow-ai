@@ -88,6 +88,24 @@ function ExecutionDrawer({
     }
   };
 
+  const retryable = exec ? ['failed', 'awaiting_review', 'cancelled'].includes(exec.status) : false;
+  const [retrying, setRetrying] = useState(false);
+  const retry = async (): Promise<void> => {
+    if (!exec) return;
+    setRetrying(true);
+    try {
+      await api.post<Execution>(`/executions/${exec.id}/retry`, { createPR: true });
+      toast.success('Execution re-queued — the pipeline is running again');
+      onChanged();
+      onClose();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to retry execution';
+      toast.error(message);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   return (
     <Drawer
       open={row !== null}
@@ -108,6 +126,12 @@ function ExecutionDrawer({
               <button className="btn btn-danger" onClick={() => void cancel()} disabled={cancelling}>
                 {cancelling ? <span className="spinner" /> : <IconX size={13} />}
                 Cancel execution
+              </button>
+            ) : null}
+            {retryable ? (
+              <button className="btn btn-primary" onClick={() => void retry()} disabled={retrying}>
+                {retrying ? <span className="spinner" /> : null}
+                Retry execution
               </button>
             ) : null}
           </>

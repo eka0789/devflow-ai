@@ -5,6 +5,7 @@
 import { getDb, nowIso } from '../db/database.js';
 import { config } from '../config.js';
 import { decryptSecret, encryptSecret } from '../util/crypto.js';
+import { assertPublicAiUrl } from './ai/provider.js';
 import type { AISettingsPublic } from '@devflow/shared';
 
 interface SecretsRow {
@@ -44,6 +45,8 @@ export function setAISettings(
   userId: string,
   input: { baseUrl: string; apiKey?: string | null; model: string }
 ): AISettingsPublic {
+  // reject private-network targets up front (SSRF guard; see provider.ts)
+  assertPublicAiUrl(input.baseUrl.replace(/\/$/, ''));
   const db = getDb();
   const row = getRow(userId);
   const apiKeyEnc =

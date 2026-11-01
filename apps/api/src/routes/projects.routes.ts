@@ -47,6 +47,13 @@ projectsRouter.delete(
 );
 
 projectsRouter.get(
+  '/projects/:id/export',
+  asyncHandler(async (req, res) => {
+    send(res, projects.exportProject(req.params.id!, req.userId!));
+  })
+);
+
+projectsRouter.get(
   '/projects/:id/activity',
   asyncHandler(async (req, res) => {
     const limit = Math.min(100, Number(req.query.limit ?? 50));

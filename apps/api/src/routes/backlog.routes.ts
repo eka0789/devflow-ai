@@ -13,6 +13,8 @@ import { z } from 'zod';
 import { asyncHandler, parseBody, send } from '../util/http.js';
 import { requireAuth } from '../middleware/auth.js';
 import * as backlog from '../services/backlog.service.js';
+import * as comments from '../services/comments.service.js';
+import { createCommentSchema } from '@devflow/shared';
 
 export const backlogRouter = Router();
 backlogRouter.use(requireAuth);
@@ -180,6 +182,31 @@ backlogRouter.delete(
   '/projects/:projectId/tasks/:id/subtasks/:subtaskId',
   asyncHandler(async (req, res) => {
     backlog.deleteSubtask(req.params.projectId!, req.params.id!, req.params.subtaskId!, req.userId!);
+    send(res, { ok: true });
+  })
+);
+
+backlogRouter.get(
+  '/projects/:projectId/tasks/:id/comments',
+  asyncHandler(async (req, res) => {
+    parseBody(projectIdParam, req.params);
+    send(res, comments.listComments(req.params.projectId!, req.params.id!, req.userId!));
+  })
+);
+
+backlogRouter.post(
+  '/projects/:projectId/tasks/:id/comments',
+  asyncHandler(async (req, res) => {
+    parseBody(projectIdParam, req.params);
+    const input = parseBody(createCommentSchema, req.body);
+    send(res, comments.addComment(req.params.projectId!, req.params.id!, req.userId!, input.body));
+  })
+);
+
+backlogRouter.delete(
+  '/projects/:projectId/tasks/:id/comments/:commentId',
+  asyncHandler(async (req, res) => {
+    comments.deleteComment(req.params.projectId!, req.params.id!, req.params.commentId!, req.userId!);
     send(res, { ok: true });
   })
 );

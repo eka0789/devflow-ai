@@ -135,11 +135,11 @@ function parseJsonLoose(raw: string): unknown {
 
 // ---------- workflow runner ----------
 
-export type WorkflowId = 'full_planning' | 'prd_only' | 'tech_plan_only' | 'backlog_only';
+export type WorkflowId = 'full_planning' | 'prd_only' | 'tech_plan_only' | 'backlog_only' | 'sprint_review';
 
 interface WorkflowSpec {
-  steps: Array<{ agent: string; action: string; mockKind: 'prd' | 'tech_plan' | 'backlog' }>;
-  draftType: 'prd' | 'tech_plan' | 'backlog';
+  steps: Array<{ agent: string; action: string; mockKind: 'prd' | 'tech_plan' | 'backlog' | 'sprint_review' }>;
+  draftType: 'prd' | 'tech_plan' | 'backlog' | 'sprint_review';
 }
 
 const WORKFLOWS: Record<WorkflowId, WorkflowSpec> = {
@@ -154,6 +154,10 @@ const WORKFLOWS: Record<WorkflowId, WorkflowSpec> = {
   prd_only: { steps: [{ agent: 'product_manager', action: 'Draft PRD from vision', mockKind: 'prd' }], draftType: 'prd' },
   tech_plan_only: { steps: [{ agent: 'architect', action: 'Derive technical plan from vision', mockKind: 'tech_plan' }], draftType: 'tech_plan' },
   backlog_only: { steps: [{ agent: 'scrum_master', action: 'Generate backlog proposal from vision', mockKind: 'backlog' }], draftType: 'backlog' },
+  sprint_review: {
+    steps: [{ agent: 'technical_writer', action: 'Generate sprint review & retrospective from real metrics', mockKind: 'sprint_review' }],
+    draftType: 'sprint_review',
+  },
 };
 
 const MAX_STEPS = 4;
@@ -174,6 +178,59 @@ function getRunRow(runId: string): RunRow {
   const row = getDb().prepare('SELECT * FROM agent_runs WHERE id = ?').get(runId) as unknown as unknown as RunRow | undefined;
   if (!row) throw AppError.notFound('Agent run');
   return row;
+}
+
+/**
+ * Sprint review & retrospective grounded in the completed sprint's frozen
+ * metrics snapshot plus execution outcomes during the sprint window.
+ */
+export function startSprintReview(projectId: string, sprintId: string, userId: string): AgentRun {
+  requireProject(projectId, userId);
+  const db = getDb();
+  const sprint = db
+    .prepare('SELECT * FROM sprints WHERE id = ? AND project_id = ?')
+    .get(sprintId, projectId) as
+    | { id: string; name: string; goal: string; status: string; completed_at: string | null; starts_at: string | null; metrics_snapshot: string | null }
+    | undefined;
+  if (!sprint) throw AppError.notFound('Sprint');
+  if (sprint.status !== 'completed') {
+    throw AppError.conflict(ErrorCodes.CONFLICT, 'Sprint reviews are generated for completed sprints only');
+  }
+
+  // stories carried over at completion are visible as backlog transitions in the window
+  const carriedOver = (
+    db
+      .prepare(
+        "SELECT COUNT(*) AS c FROM status_events WHERE project_id = ? AND entity_type = 'story' AND to_status = 'backlog' AND created_at >= COALESCE(?, '1970-01-01') AND created_at <= COALESCE(?, '9999-12-31')"
+      )
+      .get(projectId, sprint.starts_at, sprint.completed_at) as { c: number }
+  ).c;
+
+  let metrics = { totalPoints: 0, donePoints: 0, completionRate: 0, totalStories: 0, doneStories: 0 };
+  try {
+    if (sprint.metrics_snapshot) {
+      metrics = JSON.parse(sprint.metrics_snapshot) as typeof metrics;
+    }
+  } catch {
+    // fall back to zeros — the review still renders honestly
+  }
+
+  const executions = db
+    .prepare(
+      "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded, SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed FROM executions WHERE project_id = ? AND created_at >= COALESCE(?, '1970-01-01') AND created_at <= COALESCE(?, '9999-12-31')"
+    )
+    .get(projectId, sprint.starts_at, sprint.completed_at) as { total: number; succeeded: number | null; failed: number | null };
+
+  const vision = [
+    'Sprint: "' + sprint.name + '"' + (sprint.goal ? ' — goal: ' + sprint.goal : ''),
+    'Window: ' + (sprint.starts_at ?? 'unknown') + ' → ' + (sprint.completed_at ?? 'now'),
+    'Committed: ' + metrics.totalPoints + ' pts across ' + metrics.totalStories + ' stories',
+    'Completed: ' + metrics.donePoints + ' pts across ' + metrics.doneStories + ' stories (' + metrics.completionRate + '% completion)',
+    'Stories carried over to the next sprint: ' + carriedOver,
+    'AI executions during the sprint: ' + executions.total + ' total (' + (executions.succeeded ?? 0) + ' succeeded, ' + (executions.failed ?? 0) + ' failed)',
+  ].join('\n');
+
+  return startWorkflow(projectId, userId, 'sprint_review', vision);
 }
 
 /** DB row (or generic record) → AgentRun API shape. */
@@ -262,6 +319,7 @@ async function executeWorkflow(
   let tokensOut = 0;
   let prdContent = '';
   let planContent = '';
+  let reviewContent = '';
   let backlogJson = '';
   let failed = false;
   let errorMessage: string | null = null;
@@ -279,6 +337,10 @@ async function executeWorkflow(
       }
       if (step.mockKind === 'backlog') {
         userPrompt += `\n\n${prdContent ? `PRD:\n${prdContent.slice(0, 6000)}\n\n` : ''}${planContent ? `Technical plan:\n${planContent.slice(0, 6000)}` : ''}`;
+      }
+      if (step.mockKind === 'sprint_review') {
+        // userPrompt already carries the rendered sprint metrics from startSprintReview
+        userPrompt += 'Produce a sprint review (what was delivered, demo notes) and a retrospective (what went well, what to improve, concrete actions) as two markdown sections.';
       }
       messages.push({ role: 'user', content: userPrompt });
 
@@ -299,6 +361,9 @@ async function executeWorkflow(
       } else if (step.mockKind === 'tech_plan') {
         planContent = result.content;
         detail = 'Technical plan drafted';
+      } else if (step.mockKind === 'sprint_review') {
+        reviewContent = result.content;
+        detail = 'Sprint review & retrospective drafted';
       } else {
         const parsed = backlogProposalSchema.safeParse(parseJsonLoose(result.content));
         if (!parsed.success) {
@@ -329,6 +394,7 @@ async function executeWorkflow(
   const drafts: Array<{ type: string; title: string; content: string }> = [];
   if (prdContent) drafts.push({ type: 'prd', title: 'Product Requirements Document', content: prdContent });
   if (planContent) drafts.push({ type: 'tech_plan', title: 'Technical Plan', content: planContent });
+  if (reviewContent) drafts.push({ type: 'sprint_review', title: 'Sprint Review & Retrospective', content: reviewContent });
   if (backlogJson) drafts.push({ type: 'backlog', title: 'Backlog Proposal', content: backlogJson });
 
   for (const d of drafts) {

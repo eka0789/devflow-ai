@@ -87,7 +87,9 @@ export function listExecutions(projectId: string, userId: string, limit: number)
 
 export function getExecution(projectId: string, executionId: string, userId: string): Execution {
   requireProject(projectId, userId);
-  return toExecution(getExecutionRow(executionId));
+  const row = getExecutionRow(executionId);
+  if (row.project_id !== projectId) throw AppError.notFound('Execution');
+  return toExecution(row);
 }
 
 export function getExecutionDiff(projectId: string, executionId: string, userId: string): string {
@@ -155,6 +157,33 @@ export function startExecution(taskId: string, userId: string, createPR: boolean
     throw new AppError(409, ErrorCodes.EXECUTION_NOT_READY, 'Task execution requirements not met', { missing });
   }
 
+  return launchExecution(projectId, taskId, userId, createPR);
+}
+
+/** Re-runs a terminal execution's task. Skips the task-status gate (the task
+ *  may legitimately sit in "in_review" after a previous attempt) but still
+ *  refuses while another execution is in flight. */
+export function retryExecution(executionId: string, userId: string, createPR: boolean): Execution {
+  const row = getExecutionRow(executionId);
+  requireProject(row.project_id, userId);
+  const retryable = row.status === 'failed' || row.status === 'awaiting_review' || row.status === 'cancelled';
+  if (!retryable) {
+    throw AppError.conflict(ErrorCodes.CONFLICT, `Only failed or awaiting-review executions can be retried (current: ${row.status})`);
+  }
+  const { checks } = precheckTaskExecution(row.task_id, userId);
+  const missing: string[] = [];
+  if (!checks.ai) missing.push('AI provider is not configured (Settings → AI Provider)');
+  if (!checks.repo) missing.push('no GitHub repository connected to the project');
+  if (!checks.githubToken) missing.push('GitHub token is not configured (Settings → GitHub)');
+  if (!checks.noInFlight) missing.push('an execution is already in flight for this task');
+  if (missing.length > 0) {
+    throw new AppError(409, ErrorCodes.EXECUTION_NOT_READY, 'Retry requirements not met', { missing });
+  }
+  return launchExecution(row.project_id, row.task_id, userId, createPR);
+}
+
+function launchExecution(projectId: string, taskId: string, userId: string, createPR: boolean): Execution {
+  const db = getDb();
   const id = newId();
   const ts = nowIso();
   db.prepare(
@@ -176,6 +205,10 @@ export function startExecution(taskId: string, userId: string, createPR: boolean
 
 // ---------- pipeline ----------
 
+/** AI-generated changes must never touch CI/CD, credential or container files. */
+const SENSITIVE_PATH =
+  /(^|\/)(\.github\/workflows\/|\.gitlab-ci\.yml|Dockerfile[^/]*|\.dockerignore|\.env(\.|$)|[^/]*\.pem$|[^/]*\.key$|id_rsa[^/]*$|[^/]*\.pubxml$)/;
+
 const codegenSchema = z.object({
   summary: z.string().min(1).max(4000),
   files: z
@@ -185,7 +218,8 @@ const codegenSchema = z.object({
           .string()
           .min(1)
           .max(400)
-          .refine((p) => !p.startsWith('/') && !p.includes('..') && !p.includes('\\'), 'path must be relative and safe'),
+          .refine((p) => !p.startsWith('/') && !p.includes('..') && !p.includes('\\'), 'path must be relative and safe')
+          .refine((p) => !SENSITIVE_PATH.test(p), 'path targets a protected file (CI/CD, credentials, container config)'),
         action: z.enum(['add', 'modify', 'delete']),
         content: z.string().max(200000),
       })
@@ -236,7 +270,11 @@ function cloneRepo(fullName: string, branch: string, token: string): Promise<str
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve(dir);
-      else reject(new Error(`git clone failed: ${stderr.slice(-300)}`));
+      else {
+        // git echoes the credentialed URL in several failure modes — never persist it
+        const safe = stderr.slice(-300).replaceAll(token, '***');
+        reject(new Error(`git clone failed: ${safe}`));
+      }
     });
   }).catch((err) => {
     rmSync(dir, { recursive: true, force: true });

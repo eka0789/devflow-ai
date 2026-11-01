@@ -38,12 +38,38 @@ export function ProjectSettings(): JSX.Element {
     }
   };
 
+  const doExport = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      const data = await api.get<unknown>(`/projects/${project.id}/export`);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${project.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Project exported as JSON');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to export project');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="page" style={{ maxWidth: 760 }}>
       <div className="page-header">
         <div>
           <div className="page-title">Project settings</div>
           <div className="page-sub">Created {formatDate(project.createdAt)}</div>
+        </div>
+        <div className="page-actions">
+          <button className="btn" onClick={() => void doExport()} disabled={busy}>
+            Export project (JSON)
+          </button>
         </div>
       </div>
 

@@ -1,5 +1,28 @@
 # Changelog — DevFlow AI
 
+## 0.2.0 — 2026-11-01 (review pass + feature wave 2)
+
+### Added
+- **Global search**: `GET /api/search` (ownership-scoped, wildcard-escaped) wired into the Ctrl+K command palette with debounce — finds projects, stories and tasks across the workspace.
+- **Task comments**: discussion threads on tasks (schema v3), available in the kanban task drawer; author-only delete; activity feed integration.
+- **Sprint review & retrospective**: new `sprint_review` agent workflow grounded in the completed sprint's frozen metrics (points, carried-over stories, AI execution outcomes); one-click generation from the Sprints page; lands as an approvable draft (master prompt Phase 5 ceremonies).
+- **Project export**: `GET /projects/:id/export` (`devflow-project/v1`, secret-free) + one-click JSON download in project settings.
+- **Execution retry**: re-run failed/awaiting-review/cancelled executions with full requirement re-validation (task-status gate intentionally relaxed).
+- New tests: webhook HMAC real-signature path, complete merge guard (draft/conflict/CI/audit), execution cross-tenant isolation, auth rate limiting (429), cross-user project write protection, search/comments/sprint-review/export behavior — suite grew 49 → 64.
+
+### Security (fleet review findings, all fixed)
+- `GET agent-runs` endpoints now enforce project ownership + user scoping (cross-tenant read).
+- `GET /executions/stats` rejects foreign project ids instead of silently scoping.
+- Git clone stderr is redacted before persistence/logging so the GitHub PAT can never land in `executions.logs` or server logs.
+- SSRF guard on the AI provider base URL: private/loopback/link-local hosts rejected unless `ALLOW_PRIVATE_AI_HOSTS=true` (local LLM opt-in); redirects no longer followed.
+- AI-generated changes can no longer touch CI/CD, credential or container files (`.github/workflows`, `.gitlab-ci.yml`, `Dockerfile*`, `.env*`, keys/certs, pubxml).
+- `trust proxy` is now opt-in via `TRUST_PROXY=true` (prevents X-Forwarded-For spoofing against the rate limiter).
+- GitHub routes actually rate-limited (limiter was previously created but never mounted).
+
+### Fixed
+- `GET /api/projects/:projectId/executions/:id` verified `row.project_id === projectId` (cross-tenant read via a foreign project id — found empirically by the testing reviewer).
+- Sprint metrics snapshot migration restored as its own version (fresh databases now get `metrics_snapshot`).
+
 ## 0.1.0 — 2026-11-01 (initial delivery)
 
 ### Added
