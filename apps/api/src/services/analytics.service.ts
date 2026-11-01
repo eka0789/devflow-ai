@@ -60,10 +60,17 @@ export function getDashboardStats(userId: string): DashboardStats {
   const tokens = db
     .prepare('SELECT COALESCE(SUM(tokens_in + tokens_out), 0) AS c FROM usage_events WHERE user_id = ? AND created_at >= ?')
     .get(userId, month) as { c: number };
-  const prsOpen = countRow(
-    `SELECT COUNT(*) AS c FROM webhook_events WHERE project_id IN ${placeholders} AND event = 'pull_request'`,
+  // delivery-based approximation: opened minus closed pull_request events
+  // (webhook deliveries now carry project_id, populated by the webhook receiver)
+  const prOpened = countRow(
+    `SELECT COUNT(*) AS c FROM webhook_events WHERE project_id IN ${placeholders} AND event = 'pull_request' AND payload LIKE '%"action":"opened"%'`,
     ...projectIds
   );
+  const prClosed = countRow(
+    `SELECT COUNT(*) AS c FROM webhook_events WHERE project_id IN ${placeholders} AND event = 'pull_request' AND payload LIKE '%"action":"closed"%'`,
+    ...projectIds
+  );
+  const prsOpen = Math.max(0, prOpened - prClosed);
 
   return {
     projectsTotal: projectIds.length,

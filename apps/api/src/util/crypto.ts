@@ -30,8 +30,17 @@ export function verifyPassword(password: string, stored: string): boolean {
 
 // ---------- secret encryption at rest ----------
 
+// the app secret is constant per process — derive the key once (scryptSync is
+// ~50-100ms of event-loop time per call otherwise, on every decrypt hot path)
+let cachedKey: Buffer | null = null;
+let cachedKeySource = '';
+
 function deriveKey(appSecret: string): Buffer {
-  return scryptSync(appSecret, 'devflow-ai/secrets/v1', 32);
+  if (!cachedKey || cachedKeySource !== appSecret) {
+    cachedKey = scryptSync(appSecret, 'devflow-ai/secrets/v1', 32);
+    cachedKeySource = appSecret;
+  }
+  return cachedKey;
 }
 
 export function encryptSecret(plaintext: string, appSecret: string): string {

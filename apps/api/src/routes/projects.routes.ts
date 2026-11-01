@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { createProjectSchema, updateProjectSchema } from '@devflow/shared';
-import { asyncHandler, parseBody, send } from '../util/http.js';
+import { asyncHandler, parseBody, parsePositiveInt, send } from '../util/http.js';
 import { requireAuth } from '../middleware/auth.js';
 import * as projects from '../services/projects.service.js';
 
@@ -56,7 +56,7 @@ projectsRouter.get(
 projectsRouter.get(
   '/projects/:id/activity',
   asyncHandler(async (req, res) => {
-    const limit = Math.min(100, Number(req.query.limit ?? 50));
+    const limit = parsePositiveInt(req.query.limit, 50, 100);
     send(res, projects.listActivity(req.params.id!, req.userId!, limit));
   })
 );

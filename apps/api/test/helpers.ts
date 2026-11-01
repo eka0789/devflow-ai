@@ -7,7 +7,9 @@ import * as projects from '../src/services/projects.service.js';
 import type { Express } from 'express';
 
 export function freshDb(): void {
-  setDb(new DatabaseSync(':memory:'));
+  const db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON;'); // match production constraints in tests
+  setDb(db);
   runMigrations(getRawDb());
 }
 

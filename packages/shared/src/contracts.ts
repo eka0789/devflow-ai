@@ -183,6 +183,43 @@ export const executeTaskSchema = z.object({
   createPR: z.boolean().default(true),
 });
 
+// ---------- AI backlog proposals (strict JSON contract for the Scrum Master agent) ----------
+
+export const backlogProposalSchema = z.object({
+  epics: z
+    .array(
+      z.object({
+        title: z.string().min(2).max(160),
+        description: z.string().max(2000).default(''),
+        stories: z
+          .array(
+            z.object({
+              title: z.string().min(2).max(200),
+              description: z.string().max(4000).default(''),
+              points: z.number().int().min(1).max(13),
+              priority: z.enum(['low', 'medium', 'high', 'critical']),
+              acceptanceCriteria: z.array(z.string().min(1).max(500)).max(10).default([]),
+              dependencies: z.array(z.string().min(1).max(200)).max(20).default([]),
+              tasks: z
+                .array(
+                  z.object({
+                    title: z.string().min(2).max(200),
+                    description: z.string().max(4000).default(''),
+                    subtasks: z.array(z.string().min(1).max(200)).max(10).default([]),
+                  })
+                )
+                .min(1)
+                .max(8),
+            })
+          )
+          .min(1)
+          .max(10),
+      })
+    )
+    .min(1)
+    .max(6),
+});
+
 // ---------- pagination / misc ----------
 
 export const idParamsSchema = z.object({

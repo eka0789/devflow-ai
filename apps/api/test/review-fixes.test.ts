@@ -172,6 +172,35 @@ describe('execution cross-tenant isolation', () => {
       .set(authed(alice.token));
     expect(owner.status).toBe(200);
   });
+
+  it('retrying an awaiting_review execution does not count itself as in-flight', async () => {
+    const alice = makeUser('retrier2');
+    setAISettings(alice.id, { baseUrl: 'https://fake.example/v1', apiKey: 'sk-test', model: 'm' });
+    const projectId = makeProject(alice.id, 'Retryable').id;
+    getDb()
+      .prepare('UPDATE projects SET repo_full_name = ?, repo_default_branch = ? WHERE id = ?')
+      .run('acme/widget', 'main', projectId);
+    setGitHubToken(alice.id, 'ghp_alice_retry');
+    const story = createStory(projectId, alice.id, { title: 'S', description: '', points: 3, priority: 'medium', acceptanceCriteria: [] });
+    const task = createTask(projectId, alice.id, { storyId: story.id, title: 'T', description: '', priority: 'high' });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      })
+    );
+    const first = startExecution(task.id, alice.id, true);
+    // force the terminal state the pipeline would reach without Docker
+    getDb()
+      .prepare("UPDATE executions SET status = 'awaiting_review', finished_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), first.id);
+
+    const { retryExecution } = await import('../src/services/execution/pipeline.js');
+    const second = retryExecution(first.id, alice.id, true);
+    expect(['queued', 'running']).toContain(second.status);
+    expect(second.id).not.toBe(first.id);
+  });
 });
 
 describe('auth rate limiting', () => {

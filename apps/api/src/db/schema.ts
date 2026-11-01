@@ -278,6 +278,15 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX IF NOT EXISTS idx_comments_task ON comments(task_id);
   `,
+
+  // v4 — double-submit guards (partial unique indexes) + webhook query index
+  `
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_executions_task_inflight
+    ON executions(task_id) WHERE status IN ('queued', 'running');
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_project_running
+    ON agent_runs(project_id) WHERE status = 'running';
+  CREATE INDEX IF NOT EXISTS idx_webhook_events_project ON webhook_events(project_id, event);
+  `,
 ];
 
 export function runMigrations(db: DatabaseSync): void {

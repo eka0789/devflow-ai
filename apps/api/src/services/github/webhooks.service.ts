@@ -37,13 +37,21 @@ function findProjectByRepo(fullName: string): { id: string; owner_user_id: strin
 export function processWebhook(event: string, deliveryId: string, payload: unknown): { ok: boolean; note: string } {
   const db = getDb();
 
-  // dedupe by delivery id
+  // resolve the owning project up front so events are queryable per project
+  const repo = (payload as { repository?: { full_name?: string } }).repository?.full_name;
+  const project = repo ? findProjectByRepo(repo) : null;
+
+  // dedupe by delivery id — only a UNIQUE violation means a duplicate; any other
+  // failure must surface so GitHub redelivers instead of the event being dropped
   try {
     db.prepare(
-      'INSERT INTO webhook_events (id, delivery_id, project_id, event, payload, processed_at) VALUES (?, ?, NULL, ?, ?, ?)'
-    ).run(newId(), deliveryId, event, JSON.stringify(payload).slice(0, 200000), nowIso());
-  } catch {
-    return { ok: true, note: 'duplicate delivery ignored' };
+      'INSERT INTO webhook_events (id, delivery_id, project_id, event, payload, processed_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(newId(), deliveryId, project?.id ?? null, event, JSON.stringify(payload).slice(0, 200000), nowIso());
+  } catch (err) {
+    if (String(err).includes('UNIQUE')) {
+      return { ok: true, note: 'duplicate delivery ignored' };
+    }
+    throw err;
   }
 
   try {
@@ -85,9 +93,4 @@ function applyEvent(event: string, payload: unknown): void {
   }
 }
 
-export function recentWebhookEvents(limit: number): Array<{ id: string; event: string; deliveryId: string; processedAt: string | null }> {
-  const rows = getDb()
-    .prepare('SELECT * FROM webhook_events ORDER BY rowid DESC LIMIT ?')
-    .all(limit) as unknown as WebhookRow[];
-  return rows.map((r) => ({ id: r.id, event: r.event, deliveryId: r.delivery_id, processedAt: r.processed_at }));
-}
+

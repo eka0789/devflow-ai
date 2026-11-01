@@ -61,6 +61,9 @@ describe('sprint lifecycle', () => {
     const metrics = getSprintMetrics(projectId, sprint.id, user.id);
     expect(metrics.sprint.status).toBe('active');
     expect(metrics.totalPoints).toBe(3);
+    // the promotion itself must have happened (was previously unasserted)
+    const tree = backlog.getBacklogTree(projectId, user.id);
+    expect(tree.stories.find((x) => x.id === story.id)?.status).toBe('todo');
   });
 
   it('completes a sprint: carries over unfinished work and freezes metrics', async () => {
@@ -95,6 +98,12 @@ describe('sprint lifecycle', () => {
     expect(velocity[0]!.committed).toBe(13);
     expect(velocity[0]!.completed).toBe(5);
 
+    // getSprintMetrics reads the frozen snapshot (13, not the carried-over 5)
+    const frozen = getSprintMetrics(projectId, sprint.id, user.id);
+    expect(frozen.totalPoints).toBe(13);
+    expect(frozen.burndown.length).toBeGreaterThan(0);
+    expect(frozen.burndown[frozen.burndown.length - 1]!.remaining).toBe(13 - 5);
+
     expect(() => completeSprint(projectId, sprint.id, user.id)).toThrowError(AppError);
   });
 
@@ -106,6 +115,9 @@ describe('sprint lifecycle', () => {
     unassignStory(projectId, sprint.id, story.id, user.id);
     const sprints = listSprints(projectId, user.id);
     expect(sprints).toHaveLength(1);
+    // the assignment itself must be gone (was previously unasserted)
+    const tree = backlog.getBacklogTree(projectId, user.id);
+    expect(tree.stories.find((x) => x.id === story.id)?.sprintId).toBeNull();
   });
 
   it('board returns kanban tasks grouped with story titles', () => {

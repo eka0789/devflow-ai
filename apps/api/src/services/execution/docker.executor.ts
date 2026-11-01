@@ -108,7 +108,13 @@ export async function runInContainer(options: {
     workDir = mkdtempSync(path.join(tmpdir(), 'devflow-run-'));
     cpSync(options.repoDir, workDir, { recursive: true, verbatimSymlinks: false });
   } catch (err) {
-    if (workDir) rmSync(workDir, { recursive: true, force: true });
+    if (workDir) {
+      try {
+        rmSync(workDir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup on the prep path
+      }
+    }
     return {
       ran: false,
       exitCode: null,
@@ -119,9 +125,12 @@ export async function runInContainer(options: {
     };
   }
 
+  const containerName = `devflow-run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const args = [
     'run',
     '--rm',
+    '--name',
+    containerName,
     '--network',
     'none',
     '--cap-drop',
@@ -154,6 +163,8 @@ export async function runInContainer(options: {
     const timer = setTimeout(() => {
       if (!settled) {
         child.kill('SIGKILL');
+        // --rm only fires when the container exits; force-remove the orphan
+        spawn('docker', ['rm', '-f', containerName], { windowsHide: true }).on('error', () => {});
       }
     }, timeoutMs);
 
@@ -161,15 +172,25 @@ export async function runInContainer(options: {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (workDir) rmSync(workDir, { recursive: true, force: true });
+      if (workDir) {
+        try {
+          rmSync(workDir, { recursive: true, force: true });
+        } catch (cleanupErr) {
+          // a still-mounted dir (orphaned container, Windows EBUSY) must not crash the process
+          logger.warn('workspace cleanup failed', {
+            dir: workDir,
+            err: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          });
+        }
+      }
       resolve({ ran: true, exitCode, stdout: stdout.slice(0, 100000), stderr: stderr.slice(0, 100000), durationMs: Date.now() - started, reason });
     };
 
     child.stdout?.on('data', (d: Buffer) => {
-      stdout += d.toString();
+      if (stdout.length < 200_000) stdout += d.toString(); // cap accumulation
     });
     child.stderr?.on('data', (d: Buffer) => {
-      stderr += d.toString();
+      if (stderr.length < 200_000) stderr += d.toString();
     });
     child.on('error', (err) => {
       logger.warn('docker spawn failed', { err: err.message });

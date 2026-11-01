@@ -3,6 +3,9 @@
  * Opens the database, applies migrations, repairs stale in-flight records
  * left by previous processes, then starts listening.
  */
+import { readdirSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { config } from './config.js';
 import { logger, setLogLevel } from './util/logger.js';
 import { openDatabase, getDb } from './db/database.js';
@@ -34,6 +37,27 @@ if (Number(staleRuns.changes) + Number(staleExecs.changes) > 0) {
     agentRuns: staleRuns.changes,
     executions: staleExecs.changes,
   });
+}
+
+// sweep orphaned execution temp workspaces from previous runs (process kill/OOM)
+try {
+  const tmp = tmpdir();
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  for (const entry of readdirSync(tmp)) {
+    if (entry.startsWith('devflow-clone-') || entry.startsWith('devflow-run-')) {
+      const full = join(tmp, entry);
+      try {
+        if (statSync(full).mtimeMs < cutoff) {
+          rmSync(full, { recursive: true, force: true });
+          logger.info('swept stale execution workspace', { dir: entry });
+        }
+      } catch {
+        // per-entry failures are non-fatal
+      }
+    }
+  }
+} catch {
+  // tmpdir sweep is best-effort
 }
 
 const app = createApp();

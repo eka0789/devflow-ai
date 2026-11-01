@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { getDb, newId, nowIso, withTransaction } from '../db/database.js';
 import { AppError } from '../util/appError.js';
 import { ErrorCodes } from '@devflow/shared';
-import { backlogProposalSchema } from './ai/agents.service.js';
+import { backlogProposalSchema } from '@devflow/shared';
 import { recordActivity } from './events.service.js';
 import { requireProject } from './projects.service.js';
 import type { Draft, DraftStatus, DraftType } from '@devflow/shared';
@@ -59,6 +59,21 @@ export function listDrafts(projectId: string, userId: string, type: string | nul
 export function getDraft(projectId: string, draftId: string, userId: string): Draft {
   requireProject(projectId, userId);
   return toDraft(getDraftRow(draftId, projectId));
+}
+
+/** Single write path for draft creation (agent workflows call this — A6). */
+export function createDraft(
+  projectId: string,
+  userId: string,
+  type: DraftType,
+  title: string,
+  content: string
+): void {
+  getDb()
+    .prepare(
+      "INSERT INTO drafts (id, project_id, user_id, type, title, content, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)"
+    )
+    .run(newId(), projectId, userId, type, title, content, nowIso(), nowIso());
 }
 
 export function rejectDraft(projectId: string, draftId: string, userId: string): Draft {

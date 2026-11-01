@@ -11,7 +11,10 @@ import { AppError } from '../../util/appError.js';
 import { ErrorCodes } from '@devflow/shared';
 import { estimateTokens, MockProvider, OpenAICompatibleProvider, type AIProvider, type ChatRequest } from './provider.js';
 import { resolveAI } from '../settings.service.js';
-import { recordActivity, notify } from '../events.service.js';
+import { recordActivity, notify, recordUsage } from '../events.service.js';
+import { createDraft } from '../drafts.service.js';
+import { readSprintSnapshot } from '../mappers.js';
+import type { DraftType } from '@devflow/shared';
 import { requireProject } from '../projects.service.js';
 import { logger } from '../../util/logger.js';
 import type { AgentRun } from '@devflow/shared';
@@ -83,43 +86,9 @@ export function listAgents(): Array<{ role: string; name: string; description: s
 }
 
 // ---------- structured output schema ----------
-
-export const backlogProposalSchema = z.object({
-  epics: z
-    .array(
-      z.object({
-        title: z.string().min(2).max(160),
-        description: z.string().max(2000).default(''),
-        stories: z
-          .array(
-            z.object({
-              title: z.string().min(2).max(200),
-              description: z.string().max(4000).default(''),
-              points: z.number().int().min(1).max(13),
-              priority: z.enum(['low', 'medium', 'high', 'critical']),
-              acceptanceCriteria: z.array(z.string().min(1).max(500)).max(10).default([]),
-              dependencies: z.array(z.string().min(1).max(200)).max(20).default([]),
-              tasks: z
-                .array(
-                  z.object({
-                    title: z.string().min(2).max(200),
-                    description: z.string().max(4000).default(''),
-                    subtasks: z.array(z.string().min(1).max(200)).max(10).default([]),
-                  })
-                )
-                .min(1)
-                .max(8),
-            })
-          )
-          .min(1)
-          .max(10),
-      })
-    )
-    .min(1)
-    .max(6),
-});
-
-export type BacklogProposal = z.infer<typeof backlogProposalSchema>;
+// the contract itself lives in @devflow/shared (single source of truth)
+import { backlogProposalSchema } from '@devflow/shared';
+export { backlogProposalSchema };
 
 function parseJsonLoose(raw: string): unknown {
   let text = raw.trim();
@@ -206,14 +175,14 @@ export function startSprintReview(projectId: string, sprintId: string, userId: s
       .get(projectId, sprint.starts_at, sprint.completed_at) as { c: number }
   ).c;
 
-  let metrics = { totalPoints: 0, donePoints: 0, completionRate: 0, totalStories: 0, doneStories: 0 };
-  try {
-    if (sprint.metrics_snapshot) {
-      metrics = JSON.parse(sprint.metrics_snapshot) as typeof metrics;
-    }
-  } catch {
-    // fall back to zeros — the review still renders honestly
-  }
+  const snap = readSprintSnapshot(sprint);
+  const metrics = {
+    totalPoints: snap?.totalPoints ?? 0,
+    donePoints: snap?.donePoints ?? 0,
+    completionRate: snap?.completionRate ?? 0,
+    totalStories: snap?.totalStories ?? 0,
+    doneStories: snap?.doneStories ?? 0,
+  };
 
   const executions = db
     .prepare(
@@ -231,6 +200,24 @@ export function startSprintReview(projectId: string, sprintId: string, userId: s
   ].join('\n');
 
   return startWorkflow(projectId, userId, 'sprint_review', vision);
+}
+
+/** A2: run reads live in the domain module, not in routes. */
+export function getAgentRun(projectId: string, userId: string, runId: string): AgentRun {
+  requireProject(projectId, userId);
+  const row = getDb()
+    .prepare('SELECT * FROM agent_runs WHERE id = ? AND project_id = ? AND user_id = ?')
+    .get(runId, projectId, userId) as Record<string, unknown> | undefined;
+  if (!row) throw AppError.notFound('Agent run');
+  return serializeRun(row);
+}
+
+export function listAgentRuns(projectId: string, userId: string, limit: number): AgentRun[] {
+  requireProject(projectId, userId);
+  const rows = getDb()
+    .prepare('SELECT * FROM agent_runs WHERE project_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?')
+    .all(projectId, userId, limit) as Array<Record<string, unknown>>;
+  return rows.map(serializeRun);
 }
 
 /** DB row (or generic record) → AgentRun API shape. */
@@ -350,9 +337,7 @@ async function executeWorkflow(
       );
       tokensIn += result.tokensIn;
       tokensOut += result.tokensOut;
-      db.prepare(
-        'INSERT INTO usage_events (id, user_id, project_id, kind, model, tokens_in, tokens_out, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(newId(), userId, projectId, 'agent', model, result.tokensIn, result.tokensOut, nowIso());
+      recordUsage(userId, projectId, 'agent', model, result.tokensIn, result.tokensOut);
 
       let detail = '';
       if (step.mockKind === 'prd') {
@@ -398,9 +383,7 @@ async function executeWorkflow(
   if (backlogJson) drafts.push({ type: 'backlog', title: 'Backlog Proposal', content: backlogJson });
 
   for (const d of drafts) {
-    db.prepare(
-      "INSERT INTO drafts (id, project_id, user_id, type, title, content, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)"
-    ).run(newId(), projectId, userId, d.type, d.title, d.content, nowIso(), nowIso());
+    createDraft(projectId, userId, d.type as DraftType, d.title, d.content);
   }
 
   db.prepare('UPDATE agent_runs SET status = ?, steps = ?, tokens_in = ?, tokens_out = ?, error = ?, finished_at = ? WHERE id = ?').run(

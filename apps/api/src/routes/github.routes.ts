@@ -7,7 +7,7 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import * as settings from '../services/settings.service.js';
 import { GitHubClient } from '../services/github/client.js';
 import * as merge from '../services/github/merge.service.js';
-import { requireProject } from '../services/projects.service.js';
+import { requireProject, setRepo } from '../services/projects.service.js';
 import { AppError } from '../util/appError.js';
 import { ErrorCodes } from '@devflow/shared';
 
@@ -81,7 +81,7 @@ githubRouter.post(
     const client = new GitHubClient(token);
     const repo = await client.getRepo(input.repoFullName);
     void project;
-    send(res, await import('../services/projects.service.js').then((m) => m.setRepo(req.params.projectId!, req.userId!, repo.fullName, repo.defaultBranch)));
+    send(res, setRepo(req.params.projectId!, req.userId!, repo.fullName, repo.defaultBranch));
   })
 );
 
@@ -90,7 +90,7 @@ githubRouter.post(
   asyncHandler(async (req, res) => {
     parseBody(projectIdParam, req.params);
     requireProject(req.params.projectId!, req.userId!);
-    send(res, await import('../services/projects.service.js').then((m) => m.setRepo(req.params.projectId!, req.userId!, null, null)));
+    send(res, setRepo(req.params.projectId!, req.userId!, null, null));
   })
 );
 

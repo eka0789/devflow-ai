@@ -12,7 +12,7 @@
  */
 import { z } from 'zod';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { getDb, newId, nowIso } from '../../db/database.js';
@@ -24,7 +24,8 @@ import { requireProject } from '../projects.service.js';
 import { OpenAICompatibleProvider, MockProvider, type AIProvider } from '../ai/provider.js';
 import { unifiedDiff } from '../../util/diff.js';
 import { isDockerAvailable, detectImage, detectTestCommand, runInContainer } from './docker.executor.js';
-import { recordActivity, notify } from '../events.service.js';
+import { recordActivity, notify, recordUsage } from '../events.service.js';
+import { transitionEntity } from '../backlog.service.js';
 import { logger } from '../../util/logger.js';
 
 // ---------- persistence helpers ----------
@@ -79,8 +80,14 @@ function getExecutionRow(executionId: string): ExecutionRow {
 
 export function listExecutions(projectId: string, userId: string, limit: number): Execution[] {
   requireProject(projectId, userId);
+  // list view never ships diff/changes payloads (the drawer refetches detail);
+  // changes is emptied here to avoid megabytes of JSON on every poll
   const rows = getDb()
-    .prepare('SELECT * FROM executions WHERE project_id = ? ORDER BY created_at DESC LIMIT ?')
+    .prepare(
+      `SELECT id, project_id, task_id, user_id, status, mode, summary, branch, pr_number, pr_url,
+              '[]' AS changes, logs, test_result, diff, error, created_at, updated_at, finished_at
+       FROM executions WHERE project_id = ? ORDER BY created_at DESC LIMIT ?`
+    )
     .all(projectId, limit) as unknown as ExecutionRow[];
   return rows.map(toExecution);
 }
@@ -171,11 +178,19 @@ export function retryExecution(executionId: string, userId: string, createPR: bo
     throw AppError.conflict(ErrorCodes.CONFLICT, `Only failed or awaiting-review executions can be retried (current: ${row.status})`);
   }
   const { checks } = precheckTaskExecution(row.task_id, userId);
+  // the execution being retried must not count as "in flight" against itself
+  const inFlightExcludingSelf = (
+    getDb()
+      .prepare(
+        "SELECT COUNT(*) AS c FROM executions WHERE task_id = ? AND status IN ('queued','running','awaiting_review') AND id != ?"
+      )
+      .get(row.task_id, row.id) as { c: number }
+  ).c;
   const missing: string[] = [];
   if (!checks.ai) missing.push('AI provider is not configured (Settings → AI Provider)');
   if (!checks.repo) missing.push('no GitHub repository connected to the project');
   if (!checks.githubToken) missing.push('GitHub token is not configured (Settings → GitHub)');
-  if (!checks.noInFlight) missing.push('an execution is already in flight for this task');
+  if (inFlightExcludingSelf > 0) missing.push('another execution is already in flight for this task');
   if (missing.length > 0) {
     throw new AppError(409, ErrorCodes.EXECUTION_NOT_READY, 'Retry requirements not met', { missing });
   }
@@ -186,12 +201,23 @@ function launchExecution(projectId: string, taskId: string, userId: string, crea
   const db = getDb();
   const id = newId();
   const ts = nowIso();
-  db.prepare(
-    "INSERT INTO executions (id, project_id, task_id, user_id, status, mode, created_at, updated_at) VALUES (?, ?, ?, ?, 'queued', 'api', ?, ?)"
-  ).run(id, projectId, taskId, userId, ts, ts);
+  try {
+    db.prepare(
+      "INSERT INTO executions (id, project_id, task_id, user_id, status, mode, created_at, updated_at) VALUES (?, ?, ?, ?, 'queued', 'api', ?, ?)"
+    ).run(id, projectId, taskId, userId, ts, ts);
+  } catch (err) {
+    // uq_executions_task_inflight (partial unique index) — double-submit guard
+    if (String(err).includes('uq_executions_task_inflight')) {
+      throw AppError.conflict(ErrorCodes.CONFLICT, 'An execution is already in flight for this task');
+    }
+    throw err;
+  }
 
   void runPipeline(id, createPR).catch((err) => {
     logger.error('execution crashed', { executionId: id, err: err instanceof Error ? err.stack : String(err) });
+    // a cancelled execution must keep its cancelled status — the user decided
+    const current = (db.prepare('SELECT status FROM executions WHERE id = ?').get(id) as { status: string } | undefined)?.status;
+    if (current === 'cancelled') return;
     db.prepare("UPDATE executions SET status = 'failed', error = ?, finished_at = ?, updated_at = ? WHERE id = ?").run(
       err instanceof Error ? err.message : String(err),
       nowIso(),
@@ -288,7 +314,10 @@ async function runPipeline(executionId: string, createPR: boolean): Promise<void
   const project = requireProject(row.project_id, row.user_id);
   const logs: ExecutionStepLog[] = [];
 
-  db.prepare("UPDATE executions SET status = 'running', updated_at = ? WHERE id = ?").run(nowIso(), executionId);
+  const started = db
+    .prepare("UPDATE executions SET status = 'running', updated_at = ? WHERE id = ? AND status != 'cancelled'")
+    .run(nowIso(), executionId);
+  if (Number(started.changes) === 0) return; // cancelled while queued — honor it
 
   const task = db
     .prepare(
@@ -395,9 +424,7 @@ async function runPipeline(executionId: string, createPR: boolean): Promise<void
         { model, messages: [{ role: 'system', content: system }, { role: 'user', content: user }], temperature: 0.2, maxTokens: 8000, mockKind: 'chat' },
         240000
       );
-      db.prepare(
-        'INSERT INTO usage_events (id, user_id, project_id, kind, model, tokens_in, tokens_out, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(newId(), row.user_id, row.project_id, 'execution', model, result.tokensIn, result.tokensOut, nowIso());
+      recordUsage(row.user_id, row.project_id, 'execution', model, result.tokensIn, result.tokensOut);
 
       let text = result.content.trim();
       const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(text);
@@ -454,6 +481,17 @@ async function runPipeline(executionId: string, createPR: boolean): Promise<void
     let repoDir: string | null = null;
     try {
       repoDir = await cloneRepo(project.repo_full_name!, project.repo_default_branch!, token!);
+      // write the AI-generated changes into the clone so tests exercise THEM,
+      // not the untouched base branch (paths are schema-validated: relative, no ..)
+      for (const f of generated.files) {
+        const target = path.join(repoDir, f.path);
+        if (f.action === 'delete') {
+          rmSync(target, { force: true });
+          continue;
+        }
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, f.content, 'utf8');
+      }
       const image = detectImage(repoDir);
       const command = detectTestCommand(repoDir);
       if (!image || !command) {
@@ -537,9 +575,9 @@ async function runPipeline(executionId: string, createPR: boolean): Promise<void
     const transitions = db.prepare('SELECT status FROM tasks WHERE id = ?').get(row.task_id) as { status: string };
     const toReview = (async () => {
       if (transitions.status === 'todo') {
-        await import('../backlog.service.js').then((m) => m.transitionEntity('task', row.project_id, row.task_id, row.user_id, { status: 'in_progress' }));
+        await transitionEntity('task', row.project_id, row.task_id, row.user_id, { status: 'in_progress' });
       }
-      await import('../backlog.service.js').then((m) => m.transitionEntity('task', row.project_id, row.task_id, row.user_id, { status: 'in_review' }));
+      await transitionEntity('task', row.project_id, row.task_id, row.user_id, { status: 'in_review' });
     })();
     try {
       await toReview;
@@ -550,21 +588,26 @@ async function runPipeline(executionId: string, createPR: boolean): Promise<void
   });
 
   // ---- 8. finalize ----
+  // cancellation must win over the terminal state computed here
+  const current = (db.prepare('SELECT status FROM executions WHERE id = ?').get(executionId) as { status: string }).status;
+  if (current === 'cancelled') return;
+
   const finalStatus = testsPassed ? 'succeeded' : 'awaiting_review';
   const ts = nowIso();
   db.prepare('UPDATE executions SET status = ?, finished_at = ?, updated_at = ? WHERE id = ?').run(finalStatus, ts, ts, executionId);
+  const fresh = getExecutionRow(executionId);
   recordActivity(
     row.project_id,
     row.user_id,
     'execution.finished',
-    `Execution ${finalStatus.replace('_', ' ')} — branch ${branch}${createPR && getExecutionRow(executionId).pr_number ? `, PR #${getExecutionRow(executionId).pr_number}` : ''}`
+    `Execution ${finalStatus.replace('_', ' ')} — branch ${branch}${createPR && fresh.pr_number ? `, PR #${fresh.pr_number}` : ''}`
   );
   notify(
     row.user_id,
     testsPassed ? 'execution.succeeded' : 'execution.needs_review',
     testsPassed ? 'AI execution succeeded' : 'AI execution needs your review',
     testsPassed
-      ? `Task "${taskContext.taskTitle}" was implemented and tests passed.${createPR && getExecutionRow(executionId).pr_url ? ` Review PR: ${getExecutionRow(executionId).pr_url}` : ''}`
+      ? `Task "${taskContext.taskTitle}" was implemented and tests passed.${createPR && fresh.pr_url ? ` Review PR: ${fresh.pr_url}` : ''}`
       : `Task "${taskContext.taskTitle}" was implemented but tests did not run or failed. Review before merging.`
   );
 }

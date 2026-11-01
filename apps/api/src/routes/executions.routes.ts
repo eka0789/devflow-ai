@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { executeTaskSchema } from '@devflow/shared';
-import { asyncHandler, parseBody, send } from '../util/http.js';
+import { asyncHandler, parseBody, parsePositiveInt, send } from '../util/http.js';
 import { requireAuth } from '../middleware/auth.js';
 import * as pipeline from '../services/execution/pipeline.js';
 import { getExecutionStats } from '../services/analytics.service.js';
@@ -26,7 +26,7 @@ executionsRouter.get(
   '/projects/:projectId/executions',
   asyncHandler(async (req, res) => {
     parseBody(projectIdParam, req.params);
-    const limit = Math.min(100, Number(req.query.limit ?? 30));
+    const limit = parsePositiveInt(req.query.limit, 30, 100);
     send(res, pipeline.listExecutions(req.params.projectId!, req.userId!, limit));
   })
 );

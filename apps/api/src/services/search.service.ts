@@ -1,36 +1,8 @@
 /** Cross-project search — ownership-scoped, LIKE-based with escaped wildcards. */
 import { getDb } from '../db/database.js';
 import { requireProject } from './projects.service.js';
+import { toProject, toStory, toTask, type ProjectRow, type StoryRow, type TaskRow } from './mappers.js';
 import type { Project, SearchResults, Story, Task } from '@devflow/shared';
-
-interface StoryRow {
-  id: string;
-  project_id: string;
-  epic_id: string | null;
-  sprint_id: string | null;
-  title: string;
-  description: string;
-  status: string;
-  priority: string;
-  points: number;
-  position: number;
-  acceptance_criteria: string;
-  created_at: string;
-  updated_at: string;
-}
-
-interface TaskRow {
-  id: string;
-  project_id: string;
-  story_id: string;
-  title: string;
-  description: string;
-  status: string;
-  priority: string;
-  position: number;
-  created_at: string;
-  updated_at: string;
-}
 
 /** Escapes LIKE wildcards so user input matches literally. */
 function likePattern(q: string): string {
@@ -47,12 +19,12 @@ export function searchAll(userId: string, rawQuery: string, limitPerType = 8): S
   const pattern = likePattern(q);
   const cap = Math.min(25, Math.max(1, limitPerType));
 
-  const projects = db
+  const projectRows = db
     .prepare(
       `SELECT * FROM projects WHERE owner_user_id = ? AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
        ORDER BY updated_at DESC LIMIT ?`
     )
-    .all(userId, pattern, pattern, cap) as unknown as Project[];
+    .all(userId, pattern, pattern, cap) as unknown as ProjectRow[];
 
   const storyRows = db
     .prepare(
@@ -70,7 +42,11 @@ export function searchAll(userId: string, rawQuery: string, limitPerType = 8): S
     )
     .all(userId, pattern, pattern, cap) as unknown as TaskRow[];
 
-  return { projects, stories: storyRows as unknown as Story[], tasks: taskRows as unknown as Task[] };
+  return {
+    projects: projectRows.map(toProject),
+    stories: storyRows.map(toStory),
+    tasks: taskRows.map(toTask),
+  };
 }
 
 /** Validates search access to a project (kept for future scoped search). */

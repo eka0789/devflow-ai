@@ -7,7 +7,8 @@ import {
   runWorkflowSchema,
   sendMessageSchema,
 } from '@devflow/shared';
-import { asyncHandler, parseBody, send } from '../util/http.js';
+import { asyncHandler, parseBody, parsePositiveInt, send } from '../util/http.js';
+import { AppError } from '../util/appError.js';
 import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import * as settings from '../services/settings.service.js';
@@ -15,8 +16,6 @@ import * as chat from '../services/ai/chat.service.js';
 import * as agents from '../services/ai/agents.service.js';
 import * as drafts from '../services/drafts.service.js';
 import { getAIUsage } from '../services/analytics.service.js';
-import { AppError } from '../util/appError.js';
-import { requireProject } from '../services/projects.service.js';
 
 export const aiRouter = Router();
 aiRouter.use(requireAuth);
@@ -55,7 +54,7 @@ aiRouter.post(
 aiRouter.get(
   '/ai/usage',
   asyncHandler(async (req, res) => {
-    const days = Math.min(120, Math.max(1, Number(req.query.days ?? 30)));
+    const days = parsePositiveInt(req.query.days, 30, 120, 1);
     send(res, getAIUsage(req.userId!, days));
   })
 );
@@ -113,8 +112,13 @@ aiRouter.post(
     // start with an empty comment so the client's reader opens immediately
     res.write(': stream open\n\n');
 
+    // stop consuming the upstream provider when the client goes away
+    const upstream = new AbortController();
+    res.on('close', () => upstream.abort());
+
     try {
       await chat.streamChat(req.userId!, conversationId, input.content, {
+        signal: upstream.signal,
         onDelta: (text) => sse('delta', { text }),
         onDone: (payload) => {
           sse('done', payload);
@@ -158,26 +162,15 @@ aiRouter.post(
 aiRouter.get(
   '/projects/:projectId/agent-runs/:runId',
   asyncHandler(async (req, res) => {
-    requireProject(req.params.projectId!, req.userId!);
-    const row = (await import('../db/database.js')).getDb()
-      .prepare('SELECT * FROM agent_runs WHERE id = ? AND project_id = ? AND user_id = ?')
-      .get(req.params.runId!, req.params.projectId!, req.userId!) as Record<string, unknown> | undefined;
-    if (!row) throw AppError.notFound('Agent run');
-    send(res, agents.serializeRun(row));
+    send(res, agents.getAgentRun(req.params.projectId!, req.userId!, req.params.runId!));
   })
 );
 
 aiRouter.get(
   '/projects/:projectId/agent-runs',
   asyncHandler(async (req, res) => {
-    parseBody(projectIdParam, req.params);
-    requireProject(req.params.projectId!, req.userId!);
-    const db = (await import('../db/database.js')).getDb();
-    const limit = Math.min(50, Number(req.query.limit ?? 20));
-    const rows = db
-      .prepare('SELECT * FROM agent_runs WHERE project_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?')
-      .all(req.params.projectId!, req.userId!, limit) as Array<Record<string, unknown>>;
-    send(res, rows.map(agents.serializeRun));
+    const limit = parsePositiveInt(req.query.limit, 20, 50);
+    send(res, agents.listAgentRuns(req.params.projectId!, req.userId!, limit));
   })
 );
 

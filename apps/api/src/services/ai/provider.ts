@@ -33,7 +33,7 @@ export interface StreamChunk {
 export interface AIProvider {
   readonly name: string;
   complete(req: ChatRequest, timeoutMs?: number): Promise<ChatResult>;
-  stream(req: ChatRequest): AsyncGenerator<StreamChunk>;
+  stream(req: ChatRequest, externalSignal?: AbortSignal): AsyncGenerator<StreamChunk>;
 }
 
 const RETRY_STATUS = new Set([408, 409, 429, 500, 502, 503, 504]);
@@ -90,7 +90,8 @@ export class OpenAICompatibleProvider implements AIProvider {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     if (signal) {
-      signal.addEventListener('abort', () => controller.abort(), { once: true });
+      if (signal.aborted) controller.abort();
+      else signal.addEventListener('abort', () => controller.abort(), { once: true });
     }
     try {
       assertPublicAiUrl(this.baseUrl); // re-checked per request (env may change in tests)
@@ -141,7 +142,16 @@ export class OpenAICompatibleProvider implements AIProvider {
           lastError = err;
           continue;
         }
-        const data = (await res.json()) as {
+        // the timer above only covers headers — bound the body read as well
+        const data = (await Promise.race([
+          res.json() as Promise<{
+            choices?: Array<{ message?: { content?: string } }>;
+            usage?: { prompt_tokens?: number; completion_tokens?: number };
+          }>,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new AppError(504, ErrorCodes.AI_PROVIDER_ERROR, 'AI provider stalled mid-response')), 60000)
+          ),
+        ])) as {
           choices?: Array<{ message?: { content?: string } }>;
           usage?: { prompt_tokens?: number; completion_tokens?: number };
         };
@@ -164,7 +174,7 @@ export class OpenAICompatibleProvider implements AIProvider {
     throw new AppError(502, ErrorCodes.AI_PROVIDER_ERROR, lastError?.message ?? 'AI provider request failed');
   }
 
-  async *stream(req: ChatRequest): AsyncGenerator<StreamChunk> {
+  async *stream(req: ChatRequest, externalSignal?: AbortSignal): AsyncGenerator<StreamChunk> {
     const res = await this.post(
       {
         model: req.model,
@@ -174,7 +184,8 @@ export class OpenAICompatibleProvider implements AIProvider {
         stream: true,
         stream_options: { include_usage: true },
       },
-      300000
+      300000,
+      externalSignal
     );
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => '');
@@ -190,9 +201,18 @@ export class OpenAICompatibleProvider implements AIProvider {
     let buffer = '';
     let tokensIn = 0;
     let tokensOut = 0;
+    // bound each read: a stalled provider must not hold the SSE request open forever
+    const readWithDeadline = (): Promise<{ done: boolean; value?: Uint8Array }> =>
+      Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new AppError(504, ErrorCodes.AI_PROVIDER_ERROR, 'AI provider stalled mid-stream')), 120000)
+        ),
+      ]);
 
+    try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithDeadline();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       let idx: number;
@@ -222,6 +242,9 @@ export class OpenAICompatibleProvider implements AIProvider {
       }
     }
     yield { done: true, usage: { tokensIn, tokensOut } };
+    } finally {
+      reader.cancel().catch(() => {});
+    }
   }
 }
 
@@ -246,7 +269,7 @@ export class MockProvider implements AIProvider {
     };
   }
 
-  async *stream(req: ChatRequest): AsyncGenerator<StreamChunk> {
+  async *stream(req: ChatRequest, _externalSignal?: AbortSignal): AsyncGenerator<StreamChunk> {
     const content = mockContent(req);
     for (const piece of content.match(/.{1,24}/gs) ?? [content]) {
       yield { delta: piece };

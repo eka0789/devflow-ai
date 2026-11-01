@@ -22,3 +22,10 @@ export function parseParams<S extends ZodTypeAny>(schema: S, source: unknown): z
 export function send<T>(res: Response, data: T): void {
   res.json({ data });
 }
+
+/** NaN-safe, clamped integer parsing for query params like ?limit= and ?days=. */
+export function parsePositiveInt(raw: unknown, fallback: number, max: number, min = 0): number {
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}

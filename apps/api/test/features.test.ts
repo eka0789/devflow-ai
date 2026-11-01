@@ -5,13 +5,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { app, authed, freshDb, getDb, makeProject, makeUser } from './helpers.js';
-import { createStory, createTask } from '../src/services/backlog.service.js';
+import { createStory, createTask, transitionEntity } from '../src/services/backlog.service.js';
 import { activateSprint, assignStory, completeSprint, createSprint } from '../src/services/sprints.service.js';
 import { searchAll } from '../src/services/search.service.js';
 import * as comments from '../src/services/comments.service.js';
 import { exportProject } from '../src/services/projects.service.js';
 import { startSprintReview } from '../src/services/ai/agents.service.js';
 import { precheckTaskExecution, startExecution } from '../src/services/execution/pipeline.js';
+import { addStoryDependency, getBacklogTree, removeStoryDependency, updateStory, deleteStory } from '../src/services/backlog.service.js';
 import { AppError } from '../src/util/appError.js';
 
 beforeEach(() => {
@@ -50,6 +51,14 @@ describe('global search', () => {
     const auth = searchAll(alice.id, 'authentication');
     expect(auth.stories).toHaveLength(1);
     expect(auth.stories[0]!.id).toBe(story.id);
+    // contract shape: camelCase + parsed arrays (correctness review, verified repro)
+    expect(auth.stories[0]!.projectId).toBe(pA.id);
+    expect(auth.stories[0]!.acceptanceCriteria).toEqual([]);
+    expect(auth.tasks).toHaveLength(0); // the task title does not contain the query
+    const byTask = searchAll(alice.id, 'login screen');
+    expect(byTask.tasks).toHaveLength(1);
+    expect(byTask.tasks[0]!.storyId).toBe(story.id);
+    expect(byTask.tasks[0]!.projectId).toBe(pA.id);
 
     // LIKE wildcards in user input are matched literally
     const literal = searchAll(alice.id, '%aurora%');
@@ -187,6 +196,47 @@ describe('project export', () => {
     const res = await request(a).get(`/api/projects/${projectId}/export`).set(authed(user.token));
     expect(res.status).toBe(200);
     expect(res.body.data.stories).toHaveLength(1);
+  });
+});
+
+describe('dependency & sprint guards (correctness review)', () => {
+  it('rejects cross-tenant dependency removal', () => {
+    const alice = makeUser('depa');
+    const mallory = makeUser('depb');
+    const pA = makeProject(alice.id).id;
+    const sA = createStory(pA, alice.id, { title: 'SA', description: '', points: 1, priority: 'low', acceptanceCriteria: [] });
+    const sB = createStory(pA, alice.id, { title: 'SB', description: '', points: 1, priority: 'low', acceptanceCriteria: [] });
+    addStoryDependency(pA, sA.id, sB.id, alice.id);
+
+    const pM = makeProject(mallory.id).id;
+    expect(() => removeStoryDependency(pM, sA.id, sB.id, mallory.id)).toThrowError(AppError);
+    // the dependency is untouched
+    const tree = getBacklogTree(pA, alice.id);
+    expect(tree.dependencies.stories).toHaveLength(1);
+  });
+
+  it('refuses sprint assignment for a done story via PATCH (mirrors assignStory)', () => {
+    const user = makeUser('doneguard');
+    const projectId = makeProject(user.id).id;
+    const story = createStory(projectId, user.id, { title: 'Will finish', description: '', points: 2, priority: 'medium', acceptanceCriteria: [] });
+    for (const status of ['todo', 'in_progress', 'in_review', 'done'] as const) {
+      transitionEntity('story', projectId, story.id, user.id, { status });
+    }
+    const sprint = createSprint(projectId, user.id, { name: 'S', goal: '' });
+    expect(() =>
+      updateStory(projectId, story.id, user.id, { sprintId: sprint.id })
+    ).toThrowError(/completed story/);
+  });
+
+  it('deleteStory cascades tasks (FK enforcement on)', () => {
+    const user = makeUser('cascader');
+    const projectId = makeProject(user.id).id;
+    const story = createStory(projectId, user.id, { title: 'S', description: '', points: 2, priority: 'medium', acceptanceCriteria: [] });
+    const task = createTask(projectId, user.id, { storyId: story.id, title: 'T', description: '', priority: 'low' });
+    comments.addComment(projectId, task.id, user.id, 'will vanish with the task');
+    deleteStory(projectId, story.id, user.id);
+    const left = getDb().prepare('SELECT COUNT(*) AS c FROM tasks WHERE id = ?').get(task.id) as { c: number };
+    expect(left.c).toBe(0);
   });
 });
 

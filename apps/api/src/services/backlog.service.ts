@@ -265,6 +265,10 @@ export function updateStory(projectId: string, storyId: string, userId: string, 
   if (input.sprintId !== undefined && input.sprintId !== null) {
     const sprint = getDb().prepare('SELECT id FROM sprints WHERE id = ? AND project_id = ?').get(input.sprintId, projectId);
     if (!sprint) throw AppError.notFound('Sprint');
+    // mirror assignStory's guard: completed stories never join a sprint
+    if (row.status === 'done') {
+      throw AppError.conflict(ErrorCodes.CONFLICT, 'Cannot assign a completed story to a sprint');
+    }
   }
   getDb()
     .prepare(
@@ -447,6 +451,9 @@ function storyHasTransitiveDependency(from: string, target: string, seen: Set<st
 
 export function removeStoryDependency(projectId: string, storyId: string, depId: string, userId: string): void {
   requireProject(projectId, userId);
+  // both endpoints of the dependency must live in THIS project (cross-tenant guard)
+  getStoryRow(storyId, projectId);
+  getStoryRow(depId, projectId);
   const res = getDb()
     .prepare('DELETE FROM story_dependencies WHERE story_id = ? AND depends_on_story_id = ?')
     .run(storyId, depId);
@@ -480,6 +487,8 @@ function taskHasTransitiveDependency(from: string, target: string, seen: Set<str
 
 export function removeTaskDependency(projectId: string, taskId: string, depId: string, userId: string): void {
   requireProject(projectId, userId);
+  getTaskRow(taskId, projectId);
+  getTaskRow(depId, projectId);
   const res = getDb()
     .prepare('DELETE FROM task_dependencies WHERE task_id = ? AND depends_on_task_id = ?')
     .run(taskId, depId);

@@ -7,6 +7,7 @@ import { AppError } from '../../util/appError.js';
 import { ErrorCodes, type ChatMessage, type Conversation } from '@devflow/shared';
 import { OpenAICompatibleProvider, MockProvider, estimateTokens, type AIProvider } from './provider.js';
 import { resolveAI } from '../settings.service.js';
+import { recordUsage } from '../events.service.js';
 
 interface ConversationRow {
   id: string;
@@ -97,6 +98,8 @@ export interface ChatStreamHandlers {
   onDelta: (text: string) => void;
   onDone: (payload: { message: ChatMessage; conversation: Conversation }) => void;
   onError: (payload: { code: string; message: string }) => void;
+  /** Aborted when the HTTP client disconnects — stops upstream consumption. */
+  signal?: AbortSignal;
 }
 
 const CONTEXT_MESSAGE_LIMIT = 20;
@@ -112,6 +115,7 @@ export async function streamChat(
   handlers: ChatStreamHandlers
 ): Promise<void> {
   const { conversation, messages } = getConversation(userId, conversationId);
+  if (handlers.signal?.aborted) return;
 
   // persist user message immediately
   const userMsgId = newId();
@@ -160,18 +164,21 @@ export async function streamChat(
   let tokensOut = 0;
 
   try {
-    for await (const chunk of provider.stream({
-      model,
-      messages: [
-        {
-          role: 'system',
-          content: `You are DevFlow AI, a senior software engineering assistant inside a development workspace. Be precise, practical, and concise. Use markdown.${projectContext}`,
-        },
-        ...history,
-      ],
-      temperature: 0.4,
-      maxTokens: 4096,
-    })) {
+    for await (const chunk of provider.stream(
+      {
+        model,
+        messages: [
+          {
+            role: 'system',
+            content: `You are DevFlow AI, a senior software engineering assistant inside a development workspace. Be precise, practical, and concise. Use markdown.${projectContext}`,
+          },
+          ...history,
+        ],
+        temperature: 0.4,
+        maxTokens: 4096,
+      },
+      handlers.signal
+    )) {
       if (chunk.delta) {
         full += chunk.delta;
         handlers.onDelta(chunk.delta);
@@ -214,9 +221,7 @@ function persistAssistantMessage(
   ).run(id, conversationId, 'assistant', content, model, tokensIn, tokensOut, ts);
   db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(ts, conversationId);
   const conv = db.prepare('SELECT user_id, project_id FROM conversations WHERE id = ?').get(conversationId) as { user_id: string; project_id: string | null };
-  db.prepare(
-    'INSERT INTO usage_events (id, user_id, project_id, kind, model, tokens_in, tokens_out, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(newId(), conv.user_id, conv.project_id, 'chat', model, tokensIn, tokensOut, ts);
+  recordUsage(conv.user_id, conv.project_id, 'chat', model, tokensIn, tokensOut);
   const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as unknown as MessageRow;
   return toMessage(row);
 }

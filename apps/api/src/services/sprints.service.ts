@@ -200,25 +200,25 @@ export function computeSprintMetrics(sprintRow: SprintRow): SprintMetrics {
   const days = Math.min(90, Math.max(sprintDays, 1));
 
   const doneAt = firstDoneAtMap(stories.map((s) => s.id));
+  // pre-parse done timestamps once and walk the days with a cursor instead of
+  // re-filtering/re-parsing the whole story list for every day
+  const donePointsByMs = doneStories
+    .map((s) => ({ ms: new Date(doneAt.get(s.id) ?? 0).getTime(), points: s.points }))
+    .sort((a, b) => a.ms - b.ms);
   const burndown: BurndownPoint[] = [];
   const dayMs = 86400000;
   const startDay = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+  let cursor = 0;
+  let burnedSoFar = 0;
   for (let i = 0; i <= days; i++) {
-    const dayEnd = new Date(startDay.getTime() + i * dayMs + dayMs - 1);
-    const label = dayEnd.toISOString().slice(0, 10);
-    const burned = doneStories
-      .filter((s) => {
-        const at = doneAt.get(s.id);
-        return at !== undefined && new Date(at).getTime() <= dayEnd.getTime();
-      })
-      .reduce((sum, s) => sum + s.points, 0);
-    const addedAfterStart = stories
-      .filter((s) => !doneAt.has(s.id))
-      .reduce((sum, s) => sum + s.points, 0);
-    const remaining = totalPoints - burned;
+    const dayEnd = startDay.getTime() + i * dayMs + dayMs - 1;
+    while (cursor < donePointsByMs.length && donePointsByMs[cursor]!.ms <= dayEnd) {
+      burnedSoFar += donePointsByMs[cursor]!.points;
+      cursor++;
+    }
+    const label = new Date(dayEnd).toISOString().slice(0, 10);
     const ideal = Math.max(0, Math.round((totalPoints * (days - i)) / days));
-    burndown.push({ date: label, remaining, ideal });
-    void addedAfterStart;
+    burndown.push({ date: label, remaining: totalPoints - burnedSoFar, ideal });
   }
 
   return {
@@ -259,6 +259,9 @@ export function completeSprint(projectId: string, sprintId: string, userId: stri
 
   withTransaction(() => {
     db.prepare("UPDATE sprints SET status = 'completed', completed_at = ? WHERE id = ?").run(ts, sprintId);
+    // snapshot lands atomically with the completion flag — a crash between the
+    // two would leave the sprint completed with no frozen metrics
+    db.prepare('UPDATE sprints SET metrics_snapshot = ? WHERE id = ?').run(JSON.stringify(metrics), sprintId);
     // carry over: stories that did not finish return to the backlog
     const unfinished = db
       .prepare("SELECT id FROM stories WHERE sprint_id = ? AND status != 'done'")
@@ -274,7 +277,6 @@ export function completeSprint(projectId: string, sprintId: string, userId: stri
     }
   });
 
-  db.prepare('UPDATE sprints SET metrics_snapshot = ? WHERE id = ?').run(JSON.stringify(metrics), sprintId);
   recordActivity(projectId, userId, 'sprint.completed', `Sprint "${row.name}" completed — ${metrics.donePoints}/${metrics.totalPoints} pts done`);
   notify(userId, 'sprint.completed', 'Sprint completed', `"${row.name}" finished with ${metrics.completionRate}% completion.`);
   // return the snapshot with the completed sprint identity

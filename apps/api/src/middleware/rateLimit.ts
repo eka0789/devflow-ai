@@ -19,8 +19,8 @@ export function rateLimit(options: {
   return (req, _res, next) => {
     const key = keyOf ? keyOf(req) : (req.ip ?? 'unknown');
     const now = Date.now();
-    // opportunistic cleanup
-    if (buckets.size > 10000) {
+    // opportunistic cleanup — sampled so a large map never forces full scans
+    if (Math.random() < 0.01 && buckets.size > 0) {
       for (const [k, v] of buckets) if (v.resetAt < now) buckets.delete(k);
     }
     const bucket = buckets.get(key);

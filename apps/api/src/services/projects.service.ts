@@ -3,6 +3,7 @@ import { AppError } from '../util/appError.js';
 import {
   recordActivity,
 } from './events.service.js';
+import { readSprintSnapshot } from './mappers.js';
 import type {
   Activity,
   Project,
@@ -284,17 +285,10 @@ export function exportProject(projectId: string, userId: string): ProjectExport 
     metrics_snapshot: string | null;
   }>;
   const sprints = sprintRows.map((s) => {
-    let committed: number | null = null;
-    let completed: number | null = null;
-    if (s.metrics_snapshot) {
-      try {
-        const snap = JSON.parse(s.metrics_snapshot) as { totalPoints: number; donePoints: number };
-        committed = snap.totalPoints;
-        completed = snap.donePoints;
-      } catch {
-        // leave nulls — never invent numbers
-      }
-    }
+    // snapshot parsing lives in one place (mappers.readSprintSnapshot)
+    const snap = readSprintSnapshot(s);
+    const committed = snap?.totalPoints ?? null;
+    const completed = snap?.donePoints ?? null;
     return {
       id: s.id,
       name: s.name,

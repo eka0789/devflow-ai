@@ -4,10 +4,12 @@ import { requireAuth } from '../middleware/auth.js';
 import { getDashboardStats } from '../services/analytics.service.js';
 import { listGlobalActivity } from '../services/projects.service.js';
 import { searchAll } from '../services/search.service.js';
+import { parsePositiveInt } from '../util/http.js';
 import { getDb } from '../db/database.js';
+import * as events from '../services/events.service.js';
 import { verifySignature, processWebhook } from '../services/github/webhooks.service.js';
 import { AppError } from '../util/appError.js';
-import { ErrorCodes, type Notification } from '@devflow/shared';
+import { ErrorCodes } from '@devflow/shared';
 
 export const miscRouter = Router();
 
@@ -27,7 +29,7 @@ authed.get(
   '/search',
   asyncHandler(async (req, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q : '';
-    const limit = Math.min(20, Math.max(1, Number(req.query.limit ?? 8)));
+    const limit = parsePositiveInt(req.query.limit, 8, 20, 1);
     send(res, searchAll(req.userId!, q, limit));
   })
 );
@@ -35,7 +37,7 @@ authed.get(
 authed.get(
   '/activity',
   asyncHandler(async (req, res) => {
-    const limit = Math.min(100, Number(req.query.limit ?? 20));
+    const limit = parsePositiveInt(req.query.limit, 20, 100);
     send(res, listGlobalActivity(req.userId!, limit));
   })
 );
@@ -45,34 +47,14 @@ authed.get(
 authed.get(
   '/notifications',
   asyncHandler(async (req, res) => {
-    const rows = getDb()
-      .prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 100')
-      .all(req.userId!) as Array<{
-      id: string;
-      user_id: string;
-      type: string;
-      title: string;
-      body: string;
-      read: number;
-      created_at: string;
-    }>;
-    const notifications: Notification[] = rows.map((r) => ({
-      id: r.id,
-      userId: r.user_id,
-      type: r.type,
-      title: r.title,
-      body: r.body,
-      read: r.read === 1,
-      createdAt: r.created_at,
-    }));
-    send(res, notifications);
+    send(res, events.listNotifications(req.userId!, 100));
   })
 );
 
 authed.post(
   '/notifications/:id/read',
   asyncHandler(async (req, res) => {
-    getDb().prepare('UPDATE notifications SET read = 1 WHERE id = ? AND user_id = ?').run(req.params.id!, req.userId!);
+    events.markNotificationRead(req.userId!, req.params.id!);
     send(res, { ok: true });
   })
 );
@@ -80,7 +62,7 @@ authed.post(
 authed.post(
   '/notifications/read-all',
   asyncHandler(async (req, res) => {
-    getDb().prepare('UPDATE notifications SET read = 1 WHERE user_id = ?').run(req.userId!);
+    events.markAllNotificationsRead(req.userId!);
     send(res, { ok: true });
   })
 );
