@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# builds
+dist/
+build/
+*.tsbuildinfo
+
+# runtime data
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# env & secrets
+.env
+.env.local
+.env.*.local
+
+# logs
+*.log
+logs/
+
+# execution workspaces (temporary runner dirs)
+.run/
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

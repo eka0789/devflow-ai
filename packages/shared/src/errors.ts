@@ -1,0 +1,33 @@
+/** Structured application error codes shared by API and client. */
+
+export const ErrorCodes = {
+  VALIDATION_FAILED: 'VALIDATION_FAILED',
+  UNAUTHENTICATED: 'UNAUTHENTICATED',
+  FORBIDDEN: 'FORBIDDEN',
+  NOT_FOUND: 'NOT_FOUND',
+  CONFLICT: 'CONFLICT',
+  INVALID_TRANSITION: 'INVALID_TRANSITION',
+  DEPENDENCY_BLOCKED: 'DEPENDENCY_BLOCKED',
+  RATE_LIMITED: 'RATE_LIMITED',
+  AI_NOT_CONFIGURED: 'AI_NOT_CONFIGURED',
+  AI_PROVIDER_ERROR: 'AI_PROVIDER_ERROR',
+  AI_BAD_RESPONSE: 'AI_BAD_RESPONSE',
+  GITHUB_NOT_CONFIGURED: 'GITHUB_NOT_CONFIGURED',
+  GITHUB_API_ERROR: 'GITHUB_API_ERROR',
+  REPO_NOT_CONNECTED: 'REPO_NOT_CONNECTED',
+  PR_NOT_MERGEABLE: 'PR_NOT_MERGEABLE',
+  EXECUTION_NOT_READY: 'EXECUTION_NOT_READY',
+  DOCKER_UNAVAILABLE: 'DOCKER_UNAVAILABLE',
+  INTERNAL: 'INTERNAL',
+} as const;
+
+export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
+
+export interface ApiErrorBody {
+  error: {
+    code: ErrorCode;
+    message: string;
+    details?: unknown;
+  };
+  requestId?: string;
+}

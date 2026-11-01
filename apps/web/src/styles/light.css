@@ -1,0 +1,31 @@
+/* DevFlow AI — light theme overrides */
+html[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f7f8fa;
+  --bg-soft: #f2f3f6;
+  --panel: #ffffff;
+  --panel-2: #f7f8fa;
+  --border: #e3e5ea;
+  --border-soft: #eceef2;
+
+  --text: #171a20;
+  --text-muted: #5c6470;
+  --text-faint: #8a9099;
+
+  --accent: #5563f0;
+  --accent-strong: #4050e8;
+  --accent-soft: rgba(85, 99, 240, 0.1);
+  --success: #18855f;
+  --success-soft: rgba(24, 133, 95, 0.1);
+  --warning: #b0741f;
+  --warning-soft: rgba(176, 116, 31, 0.12);
+  --danger: #d13438;
+  --danger-soft: rgba(209, 52, 56, 0.1);
+  --info: #0b87c4;
+  --info-soft: rgba(11, 135, 196, 0.1);
+
+  --shadow: 0 8px 24px rgba(23, 26, 32, 0.08);
+  --shadow-sm: 0 2px 8px rgba(23, 26, 32, 0.06);
+  --shadow-lg: 0 24px 64px rgba(23, 26, 32, 0.16);
+}
