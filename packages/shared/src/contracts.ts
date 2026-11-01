@@ -4,6 +4,19 @@
  */
 import { z } from 'zod';
 
+// ---------- assignee / due date helpers (wave 3) ----------
+
+const isoDateOrDateTime = z
+  .string()
+  .trim()
+  .max(40)
+  .refine((v) => !Number.isNaN(Date.parse(v)), 'must be a parseable date');
+
+export const assigneeFieldsSchema = z.object({
+  assigneeUserId: z.string().uuid().nullable().optional(),
+  dueDate: isoDateOrDateTime.nullable().optional(),
+});
+
 // ---------- auth ----------
 
 export const registerSchema = z.object({
@@ -55,6 +68,9 @@ export const createStorySchema = z.object({
   points: z.number().int().min(0).max(100).default(3),
   priority: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
   acceptanceCriteria: z.array(z.string().min(1).max(500)).max(20).default([]),
+  assigneeUserId: z.string().uuid().nullable().optional(),
+  dueDate: isoDateOrDateTime.nullable().optional(),
+  labelIds: z.array(z.string().uuid()).max(20).default([]),
 });
 export type CreateStoryInput = z.infer<typeof createStorySchema>;
 
@@ -66,6 +82,9 @@ export const updateStorySchema = z.object({
   points: z.number().int().min(0).max(100).optional(),
   priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
   acceptanceCriteria: z.array(z.string().min(1).max(500)).max(20).optional(),
+  assigneeUserId: z.string().uuid().nullable().optional(),
+  dueDate: isoDateOrDateTime.nullable().optional(),
+  labelIds: z.array(z.string().uuid()).max(20).optional(),
 });
 export type UpdateStoryInput = z.infer<typeof updateStorySchema>;
 
@@ -74,6 +93,9 @@ export const createTaskSchema = z.object({
   title: z.string().trim().min(2).max(200),
   description: z.string().max(8000).default(''),
   priority: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
+  assigneeUserId: z.string().uuid().nullable().optional(),
+  dueDate: isoDateOrDateTime.nullable().optional(),
+  labelIds: z.array(z.string().uuid()).max(20).default([]),
 });
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 
@@ -82,6 +104,9 @@ export const updateTaskSchema = z.object({
   description: z.string().max(8000).optional(),
   priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
   position: z.number().int().min(0).optional(),
+  assigneeUserId: z.string().uuid().nullable().optional(),
+  dueDate: isoDateOrDateTime.nullable().optional(),
+  labelIds: z.array(z.string().uuid()).max(20).optional(),
 });
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
 
@@ -218,6 +243,57 @@ export const backlogProposalSchema = z.object({
     )
     .min(1)
     .max(6),
+});
+
+// ---------- workspace membership (wave 3) ----------
+
+export const inviteMemberSchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(200),
+  role: z.enum(['maintainer', 'viewer']).default('viewer'),
+});
+export type InviteMemberInput = z.infer<typeof inviteMemberSchema>;
+
+export const updateMemberSchema = z.object({
+  role: z.enum(['maintainer', 'viewer']),
+});
+
+// ---------- labels (wave 3) ----------
+
+export const createLabelSchema = z.object({
+  name: z.string().trim().min(1).max(40),
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .default('#6E7BFF'),
+});
+export type CreateLabelInput = z.infer<typeof createLabelSchema>;
+
+export const setLabelsSchema = z.object({
+  labelIds: z.array(z.string().uuid()).max(20),
+});
+
+// ---------- assignee / due date helpers: defined at top (hoisted) ----------
+
+// ---------- outgoing webhooks (wave 3) ----------
+
+export const createOutgoingWebhookSchema = z.object({
+  url: z.string().trim().url().max(500),
+  format: z.enum(['generic', 'discord', 'slack']).default('generic'),
+  events: z.array(z.string().min(1).max(80)).min(1).max(30),
+  secret: z.string().trim().min(8).max(200).optional(),
+});
+export type CreateOutgoingWebhookInput = z.infer<typeof createOutgoingWebhookSchema>;
+
+export const updateOutgoingWebhookSchema = z.object({
+  active: z.boolean().optional(),
+  events: z.array(z.string().min(1).max(80)).min(1).max(30).optional(),
+});
+
+// ---------- project import (wave 3) ----------
+
+export const importProjectSchema = z.object({
+  name: z.string().trim().min(2).max(120).optional(),
+  data: z.unknown(),
 });
 
 // ---------- pagination / misc ----------

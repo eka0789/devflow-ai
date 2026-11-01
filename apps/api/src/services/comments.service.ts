@@ -1,8 +1,9 @@
 /** Task comments — discussion thread scoped to a project and task. */
 import { getDb, newId, nowIso } from '../db/database.js';
 import { AppError } from '../util/appError.js';
-import { recordActivity } from './events.service.js';
-import { requireProject } from './projects.service.js';
+import { notify, recordActivity } from './events.service.js';
+import { requireProject, requireProjectWrite } from './projects.service.js';
+import { isWorkspaceMember } from './workspace.service.js';
 import type { Comment } from '@devflow/shared';
 
 interface CommentRow {
@@ -36,7 +37,9 @@ function assertTask(projectId: string, taskId: string, userId: string): void {
 }
 
 export function listComments(projectId: string, taskId: string, userId: string): Comment[] {
-  assertTask(projectId, taskId, userId);
+  requireProject(projectId, userId);
+  const task = getDb().prepare('SELECT id FROM tasks WHERE id = ? AND project_id = ?').get(taskId, projectId);
+  if (!task) throw AppError.notFound('Task');
   const rows = getDb()
     .prepare(
       `SELECT c.*, u.name AS user_name FROM comments c
@@ -47,22 +50,52 @@ export function listComments(projectId: string, taskId: string, userId: string):
   return rows.map(toComment);
 }
 
+/** Resolves @handles in a comment body to workspace-member user ids. */
+function resolveMentions(projectId: string, body: string): string[] {
+  const handles = new Set<string>();
+  for (const match of body.matchAll(/@([A-Za-z0-9._-]{2,40})/g)) {
+    handles.add(match[1]!.toLowerCase());
+  }
+  if (handles.size === 0) return [];
+  const ws = getDb().prepare('SELECT workspace_id FROM projects WHERE id = ?').get(projectId) as
+    | { workspace_id: string }
+    | undefined;
+  if (!ws) return [];
+  const mentioned: string[] = [];
+  for (const handle of handles) {
+    const user = getDb()
+      .prepare("SELECT id FROM users WHERE lower(name) = ? OR lower(email) = ? OR lower(substr(email, 1, instr(email || '@', '@') - 1)) = ?")
+      .get(handle, handle, handle) as { id: string } | undefined;
+    if (user && isWorkspaceMember(ws.workspace_id, user.id)) {
+      mentioned.push(user.id);
+    }
+  }
+  return mentioned;
+}
+
 export function addComment(
   projectId: string,
   taskId: string,
   userId: string,
   body: string
 ): Comment {
-  assertTask(projectId, taskId, userId);
+  requireProjectWrite(projectId, userId);
+  const task = getDb().prepare('SELECT id, title FROM tasks WHERE id = ? AND project_id = ?').get(taskId, projectId) as
+    | { id: string; title: string }
+    | undefined;
+  if (!task) throw AppError.notFound('Task');
   const db = getDb();
   const id = newId();
   db.prepare(
     'INSERT INTO comments (id, task_id, project_id, user_id, body, created_at) VALUES (?, ?, ?, ?, ?, ?)'
   ).run(id, taskId, projectId, userId, body, nowIso());
-  const taskTitle = (
-    db.prepare('SELECT title FROM tasks WHERE id = ?').get(taskId) as { title: string }
-  ).title;
-  recordActivity(projectId, userId, 'task.commented', `Commented on task "${taskTitle.slice(0, 60)}"`);
+  recordActivity(projectId, userId, 'task.commented', `Commented on task "${task.title.slice(0, 60)}"`);
+
+  // @mentions notify workspace members
+  for (const mentionedUserId of resolveMentions(projectId, body)) {
+    if (mentionedUserId === userId) continue;
+    notify(mentionedUserId, 'mention', 'You were mentioned in a comment', body.slice(0, 300));
+  }
   return toComment(
     db
       .prepare(
@@ -73,7 +106,7 @@ export function addComment(
 }
 
 export function deleteComment(projectId: string, taskId: string, commentId: string, userId: string): void {
-  assertTask(projectId, taskId, userId);
+  requireProjectWrite(projectId, userId);
   const row = getDb()
     .prepare('SELECT * FROM comments WHERE id = ? AND task_id = ?')
     .get(commentId, taskId) as CommentRow | undefined;

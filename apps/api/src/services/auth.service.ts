@@ -4,6 +4,7 @@ import { AppError } from '../util/appError.js';
 import { ErrorCodes, type AuthSession, type User, type Workspace } from '@devflow/shared';
 import { signJwt } from '../util/jwt.js';
 import { config } from '../config.js';
+import { acceptInvitesForEmail } from './workspace.service.js';
 
 interface UserRow {
   id: string;
@@ -49,6 +50,7 @@ export function register(name: string, email: string, password: string): AuthSes
     ).run(workspaceId, userId, `${name}'s workspace`, ts);
   });
 
+  acceptInvitesForEmail(email, userId);
   return issueSession(userId);
 }
 
@@ -60,6 +62,7 @@ export function login(email: string, password: string): AuthSession {
   if (!row || !verifyPassword(password, row.password_hash)) {
     throw new AppError(401, ErrorCodes.UNAUTHENTICATED, 'Invalid email or password');
   }
+  acceptInvitesForEmail(email, row.id);
   return issueSession(row.id);
 }
 

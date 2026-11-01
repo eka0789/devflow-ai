@@ -15,7 +15,7 @@ import { recordActivity, notify, recordUsage } from '../events.service.js';
 import { createDraft } from '../drafts.service.js';
 import { readSprintSnapshot } from '../mappers.js';
 import type { DraftType } from '@devflow/shared';
-import { requireProject } from '../projects.service.js';
+import { requireProject, requireProjectWrite } from '../projects.service.js';
 import { logger } from '../../util/logger.js';
 import type { AgentRun } from '@devflow/shared';
 
@@ -154,7 +154,7 @@ function getRunRow(runId: string): RunRow {
  * metrics snapshot plus execution outcomes during the sprint window.
  */
 export function startSprintReview(projectId: string, sprintId: string, userId: string): AgentRun {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   const db = getDb();
   const sprint = db
     .prepare('SELECT * FROM sprints WHERE id = ? AND project_id = ?')
@@ -243,7 +243,7 @@ export function startWorkflow(
   workflow: WorkflowId,
   vision: string
 ): AgentRun {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   const db = getDb();
   const running = db
     .prepare("SELECT id FROM agent_runs WHERE project_id = ? AND status = 'running'")

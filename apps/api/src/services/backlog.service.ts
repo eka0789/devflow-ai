@@ -6,10 +6,14 @@ import { getDb, newId, nowIso, withTransaction } from '../db/database.js';
 import { AppError } from '../util/appError.js';
 import { ErrorCodes, VALID_TRANSITIONS } from '@devflow/shared';
 import { recordActivity } from './events.service.js';
-import { requireProject } from './projects.service.js';
+import { requireProject, requireProjectWrite } from './projects.service.js';
+import { isWorkspaceMember } from './workspace.service.js';
+import { labelsForStory, labelsForTask, setStoryLabels, setTaskLabels } from './labels.service.js';
 import type {
   BacklogStatus,
   Comment,
+  Label,
+  LabelAssignment,
   CreateEpicInput,
   CreateStoryInput,
   CreateTaskInput,
@@ -48,6 +52,9 @@ interface StoryRow {
   points: number;
   position: number;
   acceptance_criteria: string;
+  assignee_user_id: string | null;
+  assignee_name?: string | null;
+  due_date: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -61,6 +68,9 @@ interface TaskRow {
   status: string;
   priority: string;
   position: number;
+  assignee_user_id: string | null;
+  assignee_name?: string | null;
+  due_date: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -99,6 +109,9 @@ function toStory(row: StoryRow): Story {
     points: row.points,
     position: row.position,
     acceptanceCriteria: JSON.parse(row.acceptance_criteria) as string[],
+    assigneeUserId: row.assignee_user_id,
+    assigneeName: row.assignee_name ?? null,
+    dueDate: row.due_date,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -114,6 +127,9 @@ function toTask(row: TaskRow): Task {
     status: row.status as BacklogStatus,
     priority: row.priority as Priority,
     position: row.position,
+    assigneeUserId: row.assignee_user_id,
+    assigneeName: row.assignee_name ?? null,
+    dueDate: row.due_date,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -130,6 +146,9 @@ export interface BacklogTree {
   stories: Story[];
   tasks: Task[];
   subtasks: Subtask[];
+  labels: Label[];
+  storyLabels: Array<{ storyId: string; labelId: string }>;
+  taskLabels: Array<{ taskId: string; labelId: string }>;
   dependencies: {
     stories: Array<[string, string]>;
     tasks: Array<[string, string]>;
@@ -140,8 +159,16 @@ export function getBacklogTree(projectId: string, userId: string): BacklogTree {
   requireProject(projectId, userId);
   const db = getDb();
   const epics = (db.prepare('SELECT * FROM epics WHERE project_id = ? ORDER BY position, created_at').all(projectId) as unknown as EpicRow[]).map(toEpic);
-  const stories = (db.prepare('SELECT * FROM stories WHERE project_id = ? ORDER BY position, created_at').all(projectId) as unknown as StoryRow[]).map(toStory);
-  const tasks = (db.prepare('SELECT * FROM tasks WHERE project_id = ? ORDER BY position, created_at').all(projectId) as unknown as TaskRow[]).map(toTask);
+  const stories = (db
+    .prepare(
+      'SELECT st.*, u.name AS assignee_name FROM stories st LEFT JOIN users u ON u.id = st.assignee_user_id WHERE st.project_id = ? ORDER BY st.position, st.created_at'
+    )
+    .all(projectId) as unknown as StoryRow[]).map(toStory);
+  const tasks = (db
+    .prepare(
+      'SELECT t.*, u.name AS assignee_name FROM tasks t LEFT JOIN users u ON u.id = t.assignee_user_id WHERE t.project_id = ? ORDER BY t.position, t.created_at'
+    )
+    .all(projectId) as unknown as TaskRow[]).map(toTask);
   const subtasks = (
     db
       .prepare(
@@ -160,11 +187,22 @@ export function getBacklogTree(projectId: string, userId: string): BacklogTree {
     )
     .all(projectId) as Array<{ task_id: string; depends_on_task_id: string }>;
 
+  const labels = db.prepare('SELECT id, project_id, name, color, created_at FROM labels WHERE project_id = ? ORDER BY name').all(projectId) as unknown as Label[];
+  const storyLabels = db
+    .prepare('SELECT sl.story_id AS "storyId", sl.label_id AS "labelId" FROM story_labels sl JOIN stories st ON st.id = sl.story_id WHERE st.project_id = ?')
+    .all(projectId) as Array<{ storyId: string; labelId: string }>;
+  const taskLabels = db
+    .prepare('SELECT tl.task_id AS "taskId", tl.label_id AS "labelId" FROM task_labels tl JOIN tasks t ON t.id = tl.task_id WHERE t.project_id = ?')
+    .all(projectId) as Array<{ taskId: string; labelId: string }>;
+
   return {
     epics,
     stories,
     tasks,
     subtasks,
+    labels,
+    storyLabels,
+    taskLabels,
     dependencies: {
       stories: storyDeps.map((d) => [d.story_id, d.depends_on_story_id] as [string, string]),
       tasks: taskDeps.map((d) => [d.task_id, d.depends_on_task_id] as [string, string]),
@@ -175,7 +213,7 @@ export function getBacklogTree(projectId: string, userId: string): BacklogTree {
 // ---------- epics ----------
 
 export function createEpic(projectId: string, userId: string, input: CreateEpicInput): Epic {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   const db = getDb();
   const id = newId();
   const ts = nowIso();
@@ -195,7 +233,7 @@ export function updateEpic(
   userId: string,
   input: { title?: string; description?: string; color?: string }
 ): Epic {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   const db = getDb();
   const row = db.prepare('SELECT * FROM epics WHERE id = ? AND project_id = ?').get(epicId, projectId) as unknown as unknown as EpicRow | undefined;
   if (!row) throw AppError.notFound('Epic');
@@ -210,7 +248,7 @@ export function updateEpic(
 }
 
 export function deleteEpic(projectId: string, epicId: string, userId: string): void {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   const res = getDb().prepare('DELETE FROM epics WHERE id = ? AND project_id = ?').run(epicId, projectId);
   if (res.changes === 0) throw AppError.notFound('Epic');
 }
@@ -218,13 +256,61 @@ export function deleteEpic(projectId: string, epicId: string, userId: string): v
 // ---------- stories ----------
 
 function getStoryRow(storyId: string, projectId: string): StoryRow {
-  const row = getDb().prepare('SELECT * FROM stories WHERE id = ? AND project_id = ?').get(storyId, projectId) as unknown as unknown as StoryRow | undefined;
+  const row = getDb()
+    .prepare('SELECT st.*, u.name AS assignee_name FROM stories st LEFT JOIN users u ON u.id = st.assignee_user_id WHERE st.id = ? AND st.project_id = ?')
+    .get(storyId, projectId) as unknown as StoryRow | undefined;
   if (!row) throw AppError.notFound('Story');
   return row;
 }
 
-export function createStory(projectId: string, userId: string, input: CreateStoryInput): Story {
-  requireProject(projectId, userId);
+export interface StoryWriteInput {
+  epicId?: string | null;
+  title: string;
+  description: string;
+  points: number;
+  priority: Priority;
+  acceptanceCriteria: string[];
+  assigneeUserId?: string | null;
+  dueDate?: string | null;
+  labelIds?: string[];
+}
+
+export interface StoryUpdateInput {
+  epicId?: string | null;
+  sprintId?: string | null;
+  title?: string;
+  description?: string;
+  points?: number;
+  priority?: Priority;
+  acceptanceCriteria?: string[];
+  assigneeUserId?: string | null;
+  dueDate?: string | null;
+  labelIds?: string[];
+}
+
+export interface TaskWriteInput {
+  storyId: string;
+  title: string;
+  description: string;
+  priority: Priority;
+  assigneeUserId?: string | null;
+  dueDate?: string | null;
+  labelIds?: string[];
+}
+
+/** Assignees must belong to the project's workspace. */
+function assertAssignee(projectId: string, assigneeUserId: string | null | undefined): void {
+  if (!assigneeUserId) return;
+  const ws = getDb().prepare('SELECT workspace_id FROM projects WHERE id = ?').get(projectId) as
+    | { workspace_id: string }
+    | undefined;
+  if (!ws || !isWorkspaceMember(ws.workspace_id, assigneeUserId)) {
+    throw AppError.badRequest(ErrorCodes.VALIDATION_FAILED, 'Assignee must be a member of this workspace');
+  }
+}
+
+export function createStory(projectId: string, userId: string, input: StoryWriteInput): Story {
+  requireProjectWrite(projectId, userId);
   if (input.epicId) {
     const epic = getDb().prepare('SELECT id FROM epics WHERE id = ? AND project_id = ?').get(input.epicId, projectId);
     if (!epic) throw AppError.notFound('Epic');
@@ -235,8 +321,9 @@ export function createStory(projectId: string, userId: string, input: CreateStor
   const maxPos = db
     .prepare('SELECT COALESCE(MAX(position), -1) AS p FROM stories WHERE project_id = ?')
     .get(projectId) as { p: number };
+  assertAssignee(projectId, input.assigneeUserId);
   db.prepare(
-    'INSERT INTO stories (id, project_id, epic_id, sprint_id, title, description, status, priority, points, position, acceptance_criteria, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO stories (id, project_id, epic_id, sprint_id, title, description, status, priority, points, position, acceptance_criteria, assignee_user_id, due_date, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     id,
     projectId,
@@ -248,15 +335,18 @@ export function createStory(projectId: string, userId: string, input: CreateStor
     input.points,
     maxPos.p + 1,
     JSON.stringify(input.acceptanceCriteria),
+    input.assigneeUserId ?? null,
+    input.dueDate ?? null,
     ts,
     ts
   );
+  if (input.labelIds && input.labelIds.length > 0) setStoryLabels(projectId, id, input.labelIds);
   recordActivity(projectId, userId, 'story.created', `Story "${input.title}" created (${input.points} pts)`);
   return toStory(getStoryRow(id, projectId));
 }
 
-export function updateStory(projectId: string, storyId: string, userId: string, input: UpdateStoryInput): Story {
-  requireProject(projectId, userId);
+export function updateStory(projectId: string, storyId: string, userId: string, input: StoryUpdateInput): Story {
+  requireProjectWrite(projectId, userId);
   const row = getStoryRow(storyId, projectId);
   if (input.epicId !== undefined && input.epicId !== null) {
     const epic = getDb().prepare('SELECT id FROM epics WHERE id = ? AND project_id = ?').get(input.epicId, projectId);
@@ -270,9 +360,10 @@ export function updateStory(projectId: string, storyId: string, userId: string, 
       throw AppError.conflict(ErrorCodes.CONFLICT, 'Cannot assign a completed story to a sprint');
     }
   }
+  assertAssignee(projectId, input.assigneeUserId);
   getDb()
     .prepare(
-      'UPDATE stories SET epic_id = ?, sprint_id = ?, title = ?, description = ?, points = ?, priority = ?, acceptance_criteria = ?, updated_at = ? WHERE id = ?'
+      'UPDATE stories SET epic_id = ?, sprint_id = ?, title = ?, description = ?, points = ?, priority = ?, acceptance_criteria = ?, assignee_user_id = ?, due_date = ?, updated_at = ? WHERE id = ?'
     )
     .run(
       input.epicId !== undefined ? input.epicId : row.epic_id,
@@ -282,14 +373,17 @@ export function updateStory(projectId: string, storyId: string, userId: string, 
       input.points ?? row.points,
       input.priority ?? row.priority,
       input.acceptanceCriteria ? JSON.stringify(input.acceptanceCriteria) : row.acceptance_criteria,
+      input.assigneeUserId !== undefined ? input.assigneeUserId : row.assignee_user_id,
+      input.dueDate !== undefined ? input.dueDate : row.due_date,
       nowIso(),
       storyId
     );
+  if (input.labelIds !== undefined) setStoryLabels(projectId, storyId, input.labelIds);
   return toStory(getStoryRow(storyId, projectId));
 }
 
 export function deleteStory(projectId: string, storyId: string, userId: string): void {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   const res = getDb().prepare('DELETE FROM stories WHERE id = ? AND project_id = ?').run(storyId, projectId);
   if (res.changes === 0) throw AppError.notFound('Story');
 }
@@ -297,13 +391,15 @@ export function deleteStory(projectId: string, storyId: string, userId: string):
 // ---------- tasks ----------
 
 function getTaskRow(taskId: string, projectId: string): TaskRow {
-  const row = getDb().prepare('SELECT * FROM tasks WHERE id = ? AND project_id = ?').get(taskId, projectId) as unknown as unknown as TaskRow | undefined;
+  const row = getDb()
+    .prepare('SELECT t.*, u.name AS assignee_name FROM tasks t LEFT JOIN users u ON u.id = t.assignee_user_id WHERE t.id = ? AND t.project_id = ?')
+    .get(taskId, projectId) as unknown as TaskRow | undefined;
   if (!row) throw AppError.notFound('Task');
   return row;
 }
 
-export function createTask(projectId: string, userId: string, input: CreateTaskInput): Task {
-  requireProject(projectId, userId);
+export function createTask(projectId: string, userId: string, input: TaskWriteInput): Task {
+  requireProjectWrite(projectId, userId);
   const story = getDb().prepare('SELECT id FROM stories WHERE id = ? AND project_id = ?').get(input.storyId, projectId);
   if (!story) throw AppError.notFound('Story');
   const db = getDb();
@@ -312,31 +408,47 @@ export function createTask(projectId: string, userId: string, input: CreateTaskI
   const maxPos = db
     .prepare('SELECT COALESCE(MAX(position), -1) AS p FROM tasks WHERE story_id = ?')
     .get(input.storyId) as { p: number };
+  assertAssignee(projectId, input.assigneeUserId);
   db.prepare(
-    'INSERT INTO tasks (id, project_id, story_id, title, description, status, priority, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, projectId, input.storyId, input.title, input.description, 'todo', input.priority, maxPos.p + 1, ts, ts);
+    'INSERT INTO tasks (id, project_id, story_id, title, description, status, priority, position, assignee_user_id, due_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, projectId, input.storyId, input.title, input.description, 'todo', input.priority, maxPos.p + 1, input.assigneeUserId ?? null, input.dueDate ?? null, ts, ts);
+  if (input.labelIds && input.labelIds.length > 0) setTaskLabels(projectId, id, input.labelIds);
   recordActivity(projectId, userId, 'task.created', `Task "${input.title}" created`);
   return toTask(getTaskRow(id, projectId));
 }
 
-export function updateTask(projectId: string, taskId: string, userId: string, input: UpdateTaskInput): Task {
-  requireProject(projectId, userId);
+export interface TaskUpdateInput {
+  title?: string;
+  description?: string;
+  priority?: Priority;
+  position?: number;
+  assigneeUserId?: string | null;
+  dueDate?: string | null;
+  labelIds?: string[];
+}
+
+export function updateTask(projectId: string, taskId: string, userId: string, input: TaskUpdateInput): Task {
+  requireProjectWrite(projectId, userId);
   const row = getTaskRow(taskId, projectId);
+  assertAssignee(projectId, input.assigneeUserId);
   getDb()
-    .prepare('UPDATE tasks SET title = ?, description = ?, priority = ?, position = ?, updated_at = ? WHERE id = ?')
+    .prepare('UPDATE tasks SET title = ?, description = ?, priority = ?, position = ?, assignee_user_id = ?, due_date = ?, updated_at = ? WHERE id = ?')
     .run(
       input.title ?? row.title,
       input.description ?? row.description,
       input.priority ?? row.priority,
       input.position ?? row.position,
+      input.assigneeUserId !== undefined ? input.assigneeUserId : row.assignee_user_id,
+      input.dueDate !== undefined ? input.dueDate : row.due_date,
       nowIso(),
       taskId
     );
+  if (input.labelIds !== undefined) setTaskLabels(projectId, taskId, input.labelIds);
   return toTask(getTaskRow(taskId, projectId));
 }
 
 export function deleteTask(projectId: string, taskId: string, userId: string): void {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   const res = getDb().prepare('DELETE FROM tasks WHERE id = ? AND project_id = ?').run(taskId, projectId);
   if (res.changes === 0) throw AppError.notFound('Task');
 }
@@ -347,6 +459,8 @@ export interface TaskDetail {
   subtasks: Subtask[];
   dependencies: Task[];
   comments: Comment[];
+  labels: LabelAssignment[];
+  timeline: Array<{ at: string; kind: 'status' | 'comment' | 'execution'; label: string }>;
 }
 
 export function getTaskDetail(projectId: string, taskId: string, userId: string): TaskDetail {
@@ -366,8 +480,36 @@ export function getTaskDetail(projectId: string, taskId: string, userId: string)
       'SELECT c.*, u.name AS user_name FROM comments c LEFT JOIN users u ON u.id = c.user_id WHERE c.task_id = ? ORDER BY c.created_at, c.rowid LIMIT 500'
     )
     .all(taskId) as unknown as Array<{ id: string; task_id: string; project_id: string; user_id: string; body: string; created_at: string; user_name: string | null }>;
+  const taskWithNames = { ...taskRow, assignee_name: (getDb().prepare('SELECT name FROM users WHERE id = ?').get(taskRow.assignee_user_id ?? '') as { name: string } | undefined)?.name ?? null };
+  const labels: LabelAssignment[] = labelsForTask(taskId).map((l) => ({ labelId: l.id, name: l.name, color: l.color }));
+
+  // composed per-task timeline: status changes + executions + comments
+  const timeline: TaskDetail['timeline'] = [];
+  const statusEvents = getDb()
+    .prepare(
+      "SELECT to_status, created_at FROM status_events WHERE entity_type = 'task' AND entity_id = ? ORDER BY created_at LIMIT 200"
+    )
+    .all(taskId) as unknown as Array<{ to_status: string; created_at: string }>;
+  for (const e of statusEvents) {
+    timeline.push({ at: e.created_at, kind: 'status', label: `status → ${e.to_status}` });
+  }
+  const execs = getDb()
+    .prepare('SELECT status, created_at, pr_number FROM executions WHERE task_id = ? ORDER BY created_at LIMIT 50')
+    .all(taskId) as unknown as Array<{ status: string; created_at: string; pr_number: number | null }>;
+  for (const e of execs) {
+    timeline.push({
+      at: e.created_at,
+      kind: 'execution',
+      label: `AI execution ${e.status.replace('_', ' ')}${e.pr_number ? ` (PR #${e.pr_number})` : ''}`,
+    });
+  }
+  for (const c of commentRows) {
+    timeline.push({ at: c.created_at, kind: 'comment', label: `comment by ${c.user_name ?? 'unknown'}` });
+  }
+  timeline.sort((a, b) => a.at.localeCompare(b.at));
+
   return {
-    task: toTask(taskRow),
+    task: toTask(taskWithNames),
     story: toStory(storyRow),
     subtasks: subtaskRows.map(toSubtask),
     dependencies: depRows.map(toTask),
@@ -380,13 +522,15 @@ export function getTaskDetail(projectId: string, taskId: string, userId: string)
       body: c.body,
       createdAt: c.created_at,
     })),
+    labels,
+    timeline,
   };
 }
 
 // ---------- subtasks ----------
 
 export function createSubtask(projectId: string, taskId: string, userId: string, title: string): Subtask {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   getTaskRow(taskId, projectId);
   const db = getDb();
   const maxPos = db.prepare('SELECT COALESCE(MAX(position), -1) AS p FROM subtasks WHERE task_id = ?').get(taskId) as { p: number };
@@ -402,7 +546,7 @@ export function updateSubtask(
   userId: string,
   input: { title?: string; done?: boolean }
 ): Subtask {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   getTaskRow(taskId, projectId);
   const row = getDb().prepare('SELECT * FROM subtasks WHERE id = ? AND task_id = ?').get(subtaskId, taskId) as unknown as unknown as SubtaskRow | undefined;
   if (!row) throw AppError.notFound('Subtask');
@@ -415,7 +559,7 @@ export function updateSubtask(
 }
 
 export function deleteSubtask(projectId: string, taskId: string, subtaskId: string, userId: string): void {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   getTaskRow(taskId, projectId);
   const res = getDb().prepare('DELETE FROM subtasks WHERE id = ? AND task_id = ?').run(subtaskId, taskId);
   if (res.changes === 0) throw AppError.notFound('Subtask');
@@ -424,7 +568,7 @@ export function deleteSubtask(projectId: string, taskId: string, subtaskId: stri
 // ---------- dependencies ----------
 
 export function addStoryDependency(projectId: string, storyId: string, dependsOnId: string, userId: string): void {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   getStoryRow(storyId, projectId);
   if (storyId === dependsOnId) {
     throw AppError.badRequest(ErrorCodes.VALIDATION_FAILED, 'A story cannot depend on itself');
@@ -450,7 +594,7 @@ function storyHasTransitiveDependency(from: string, target: string, seen: Set<st
 }
 
 export function removeStoryDependency(projectId: string, storyId: string, depId: string, userId: string): void {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   // both endpoints of the dependency must live in THIS project (cross-tenant guard)
   getStoryRow(storyId, projectId);
   getStoryRow(depId, projectId);
@@ -461,7 +605,7 @@ export function removeStoryDependency(projectId: string, storyId: string, depId:
 }
 
 export function addTaskDependency(projectId: string, taskId: string, dependsOnId: string, userId: string): void {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   getTaskRow(taskId, projectId);
   if (taskId === dependsOnId) {
     throw AppError.badRequest(ErrorCodes.VALIDATION_FAILED, 'A task cannot depend on itself');
@@ -486,7 +630,7 @@ function taskHasTransitiveDependency(from: string, target: string, seen: Set<str
 }
 
 export function removeTaskDependency(projectId: string, taskId: string, depId: string, userId: string): void {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   getTaskRow(taskId, projectId);
   getTaskRow(depId, projectId);
   const res = getDb()
@@ -520,7 +664,7 @@ export function transitionEntity(
   userId: string,
   input: TransitionInput
 ): Story | Task {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   const toStatus = input.status;
   const table = entityType === 'story' ? 'stories' : 'tasks';
 

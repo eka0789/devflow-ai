@@ -431,6 +431,32 @@ export function formatRelative(iso: string | null | undefined): string {
   return formatDate(iso);
 }
 
+/** True when `dueDate` (YYYY-MM-DD or ISO timestamp) falls before today; done/cancelled items are never overdue. */
+export function isOverdue(dueDate: string | null | undefined, status?: string): boolean {
+  if (!dueDate) return false;
+  if (status === 'done' || status === 'cancelled') return false;
+  const parts = dueDate.slice(0, 10).split('-');
+  if (parts.length !== 3) return false;
+  const y = Number(parts[0]);
+  const m = Number(parts[1]);
+  const d = Number(parts[2]);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return false;
+  const now = new Date();
+  const due = new Date(y, m - 1, d).getTime();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return due < startOfToday;
+}
+
+/** First letters of the first two words of `name`, uppercased; "?" when empty. */
+export function initialsOf(name: string | null | undefined): string {
+  const words = (name ?? '').trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '?';
+  return words
+    .slice(0, 2)
+    .map((w) => w[0]!.toUpperCase())
+    .join('');
+}
+
 export function formatNumber(value: number): string {
   return value.toLocaleString('en-US');
 }

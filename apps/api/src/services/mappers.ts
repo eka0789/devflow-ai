@@ -47,6 +47,9 @@ export interface StoryRow {
   points: number;
   position: number;
   acceptance_criteria: string;
+  assignee_user_id?: string | null;
+  assignee_name?: string | null;
+  due_date?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -64,6 +67,9 @@ export function toStory(row: StoryRow): Story {
     points: row.points,
     position: row.position,
     acceptanceCriteria: JSON.parse(row.acceptance_criteria) as string[],
+    assigneeUserId: row.assignee_user_id ?? null,
+    assigneeName: row.assignee_name ?? null,
+    dueDate: row.due_date ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -78,6 +84,9 @@ export interface TaskRow {
   status: string;
   priority: string;
   position: number;
+  assignee_user_id?: string | null;
+  assignee_name?: string | null;
+  due_date?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -92,6 +101,9 @@ export function toTask(row: TaskRow): Task {
     status: row.status as Task['status'],
     priority: row.priority as Task['priority'],
     position: row.position,
+    assigneeUserId: row.assignee_user_id ?? null,
+    assigneeName: row.assignee_name ?? null,
+    dueDate: row.due_date ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

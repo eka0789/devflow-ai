@@ -25,6 +25,34 @@ export interface Workspace {
   createdAt: string;
 }
 
+export type WorkspaceRole = 'owner' | 'maintainer' | 'viewer';
+
+export interface WorkspaceMember {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  userName: string | null;
+  userEmail: string | null;
+  role: WorkspaceRole;
+  createdAt: string;
+}
+
+export interface WorkspaceInvite {
+  id: string;
+  workspaceId: string;
+  email: string;
+  role: WorkspaceRole;
+  invitedByUserId: string;
+  createdAt: string;
+  acceptedAt: string | null;
+}
+
+export interface WorkspaceRoster {
+  workspace: Workspace;
+  members: WorkspaceMember[];
+  invites: WorkspaceInvite[];
+}
+
 // ---------- Projects ----------
 
 export type ProjectStatus = 'planning' | 'active' | 'paused' | 'archived';
@@ -79,6 +107,9 @@ export interface Story {
   points: number;
   position: number;
   acceptanceCriteria: string[];
+  assigneeUserId: string | null;
+  assigneeName: string | null;
+  dueDate: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -92,8 +123,62 @@ export interface Task {
   status: BacklogStatus;
   priority: Priority;
   position: number;
+  assigneeUserId: string | null;
+  assigneeName: string | null;
+  dueDate: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Colored label attachable to stories and tasks. */
+export interface Label {
+  id: string;
+  projectId: string;
+  name: string;
+  color: string;
+  createdAt: string;
+}
+
+export interface LabelAssignment {
+  labelId: string;
+  name: string;
+  color: string;
+}
+
+/** Cross-project view of everything assigned to the current user. */
+export interface MyWork {
+  tasks: Array<Task & { projectName: string; storyTitle: string }>;
+  stories: Array<Story & { projectName: string }>;
+}
+
+/** Computed roadmap rows for the lightweight Gantt view. */
+export interface RoadmapItem {
+  id: string;
+  title: string;
+  kind: 'epic' | 'sprint';
+  start: string;
+  end: string;
+  status: string;
+  totalPoints: number;
+  donePoints: number;
+}
+
+export interface Roadmap {
+  items: RoadmapItem[];
+  minDate: string;
+  maxDate: string;
+}
+
+export type OutgoingWebhookFormat = 'generic' | 'discord' | 'slack';
+
+export interface OutgoingWebhook {
+  id: string;
+  userId: string;
+  url: string;
+  format: OutgoingWebhookFormat;
+  events: string[]; // event types or '*'
+  active: boolean;
+  createdAt: string;
 }
 
 export interface Subtask {

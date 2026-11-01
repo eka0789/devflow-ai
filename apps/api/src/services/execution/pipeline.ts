@@ -20,7 +20,7 @@ import { AppError } from '../../util/appError.js';
 import { ErrorCodes, type Execution, type ExecutionFileChange, type ExecutionStepLog } from '@devflow/shared';
 import { GitHubClient } from '../github/client.js';
 import { getGitHubToken, resolveAI } from '../settings.service.js';
-import { requireProject } from '../projects.service.js';
+import { requireProject, requireProjectWrite } from '../projects.service.js';
 import { OpenAICompatibleProvider, MockProvider, type AIProvider } from '../ai/provider.js';
 import { unifiedDiff } from '../../util/diff.js';
 import { isDockerAvailable, detectImage, detectTestCommand, runInContainer } from './docker.executor.js';
@@ -108,7 +108,7 @@ export function getExecutionDiff(projectId: string, executionId: string, userId:
 
 export function cancelExecution(executionId: string, userId: string): Execution {
   const row = getExecutionRow(executionId);
-  requireProject(row.project_id, userId);
+  requireProjectWrite(row.project_id, userId);
   if (row.status !== 'queued' && row.status !== 'running') {
     throw AppError.conflict(ErrorCodes.CONFLICT, `Execution is already ${row.status}`);
   }
@@ -152,7 +152,7 @@ export function precheckTaskExecution(taskId: string, userId: string): { project
 export function startExecution(taskId: string, userId: string, createPR: boolean): Execution {
   const db = getDb();
   const { projectId, checks } = precheckTaskExecution(taskId, userId);
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
 
   const missing: string[] = [];
   if (!checks.ai) missing.push('AI provider is not configured (Settings → AI Provider)');
@@ -172,7 +172,7 @@ export function startExecution(taskId: string, userId: string, createPR: boolean
  *  refuses while another execution is in flight. */
 export function retryExecution(executionId: string, userId: string, createPR: boolean): Execution {
   const row = getExecutionRow(executionId);
-  requireProject(row.project_id, userId);
+  requireProjectWrite(row.project_id, userId);
   const retryable = row.status === 'failed' || row.status === 'awaiting_review' || row.status === 'cancelled';
   if (!retryable) {
     throw AppError.conflict(ErrorCodes.CONFLICT, `Only failed or awaiting-review executions can be retried (current: ${row.status})`);

@@ -220,6 +220,77 @@ Grounded in the completed sprint's frozen metrics snapshot (committed/completed 
 
 Allowed when the original execution is `failed`, `awaiting_review` or `cancelled`. Enforces the same requirement checks as a fresh execution (AI configured, repo connected, GitHub token, no execution in flight) **except** the task-status gate — the task may legitimately sit in `in_review` after a prior attempt. `409 EXECUTION_NOT_READY` with `details.missing` lists anything absent; `409 CONFLICT` for non-retryable statuses.
 
+## Workspace team (multi-member)
+
+Roles: `owner` (full control), `maintainer` (read/write on projects), `viewer` (read-only — writes return `403 FORBIDDEN`).
+
+Project access: the owner plus every member of the project's workspace (read); writes additionally require owner/maintainer. Non-members get `404`.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/workspace/roster` | — | `WorkspaceRoster {workspace, members, invites}` (own workspace, or the first workspace the user is a member of) |
+| POST | `/workspace/invites` | `{email, role: 'maintainer'\|'viewer'}` | `WorkspaceInvite` — known accounts are granted membership immediately; unknown emails get a pending invite that activates when that email registers/logs in |
+| DELETE | `/workspace/invites/:id` | — | `{ok:true}` (revoke, owner only) |
+| PATCH | `/workspace/members/:userId/role` | `{role}` | `{ok:true}` (owner only; owner role itself is immutable) |
+| DELETE | `/workspace/members/:userId` | — | `{ok:true}` (owner only; the owner cannot be removed) |
+
+## My Work
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/my-work` | `MyWork {tasks: (Task & {projectName, storyTitle})[], stories: (Story & {projectName})[]}` — open (non-done) items assigned to the current user across all their projects, due-date ordered |
+
+## Assignee & due dates
+
+Story and task create/update payloads accept `assigneeUserId` (uuid — **must be a member of the project's workspace**, otherwise `400 VALIDATION_FAILED`), `dueDate` (any parseable date string), and `labelIds`. Story/Task responses include `assigneeUserId`, `assigneeName` and `dueDate`.
+
+## Labels
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/projects/:projectId/labels` | — | `Label[]` |
+| POST | `/projects/:projectId/labels` | `{name, color}` | `Label` (`409` on duplicate name, case-insensitive) |
+| PATCH | `/projects/:projectId/labels/:id` | `{name?, color?}` | `Label` |
+| DELETE | `/projects/:projectId/labels/:id` | — | `{ok:true}` (cascades assignments) |
+| PUT | `/projects/:projectId/stories/:id/labels` | `{labelIds[]}` | `{ok:true}` (replaces the set) |
+| PUT | `/projects/:projectId/tasks/:id/labels` | `{labelIds[]}` | `{ok:true}` |
+
+`GET /projects/:projectId/backlog` now also returns `labels`, `storyLabels` and `taskLabels`.
+
+## Task timeline
+
+`GET /projects/:projectId/tasks/:id` additionally returns `timeline: {at, kind: 'status'\|'comment'\|'execution', label}[]` — a composed, chronological history built from real status events, AI executions and comments.
+
+## Mentions
+
+Comments containing `@name` / `@email` / `@email-local-part` notify the matching **workspace member** (notification type `mention`). Non-members are never notified.
+
+## Roadmap
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/projects/:projectId/roadmap` | `Roadmap {items: {id, title, kind: 'epic'\|'sprint', start, end, status, totalPoints, donePoints}[], minDate, maxDate}` — epics span story created→max due date; sprints span their windows. No dates are invented. |
+
+## Project import
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/projects/import` | `{name?, data: <devflow-project/v1 export>}` | `{projectId, counts}` |
+
+Materializes a snapshot as a NEW project with fresh IDs (epic/sprint/story references remapped). Sprints keep committed/completed points from the export's snapshots; status-event history is not reconstructed (documented limitation). `422` with issue details on malformed files. Exports now include `labels`/`storyLabels`/`taskLabels` for full round-trips.
+
+## Outgoing webhooks
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/webhooks/outgoing` | — | `OutgoingWebhook[]` |
+| POST | `/webhooks/outgoing` | `{url, format: 'generic'\|'discord'\|'slack', events[], secret?}` | `OutgoingWebhook` |
+| PATCH | `/webhooks/outgoing/:id` | `{active?, events?}` | `OutgoingWebhook` |
+| DELETE | `/webhooks/outgoing/:id` | — | `{ok:true}` |
+| POST | `/webhooks/outgoing/:id/test` | — | `{ok, status?, error?}` — real ping |
+
+Deliveries: every `notify()` fans out fire-and-forget to the user's active hooks whose `events` include the type (or `'*'`). Payloads: `generic` → `{type,title,body,timestamp}`; `discord` → `{content}`; `slack` → `{text}`. Signed with `X-DevFlow-Signature: sha256=<HMAC(secret, body)>` when a secret is configured.
+
 ## Notifications
 
 | Method | Path | Returns |

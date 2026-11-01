@@ -9,7 +9,7 @@ import { AppError } from '../util/appError.js';
 import { ErrorCodes } from '@devflow/shared';
 import { backlogProposalSchema } from '@devflow/shared';
 import { recordActivity } from './events.service.js';
-import { requireProject } from './projects.service.js';
+import { requireProject, requireProjectWrite } from './projects.service.js';
 import type { Draft, DraftStatus, DraftType } from '@devflow/shared';
 
 interface DraftRow {
@@ -77,7 +77,7 @@ export function createDraft(
 }
 
 export function rejectDraft(projectId: string, draftId: string, userId: string): Draft {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   const row = getDraftRow(draftId, projectId);
   if (row.status !== 'draft') {
     throw AppError.conflict(ErrorCodes.CONFLICT, `Draft is already ${row.status}`);
@@ -92,7 +92,7 @@ export interface ApproveResult {
 }
 
 export function approveDraft(projectId: string, draftId: string, userId: string, createRecords: boolean): ApproveResult {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   const row = getDraftRow(draftId, projectId);
   if (row.status !== 'draft') {
     throw AppError.conflict(ErrorCodes.CONFLICT, `Draft is already ${row.status}`);

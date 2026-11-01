@@ -1,6 +1,7 @@
 /** Cross-cutting event helpers: activity feed, notifications, audit log, usage metering. */
 import { getDb, newId, nowIso } from '../db/database.js';
 import type { Notification } from '@devflow/shared';
+import { deliverEvent } from './outgoing-webhooks.service.js';
 
 export function recordActivity(
   projectId: string,
@@ -89,4 +90,6 @@ export function notify(
       'INSERT INTO notifications (id, user_id, type, title, body, read, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)'
     )
     .run(newId(), userId, type, title, body, nowIso());
+  // fan out to the user's active outgoing webhooks (fire-and-forget)
+  deliverEvent(userId, type, title, body);
 }

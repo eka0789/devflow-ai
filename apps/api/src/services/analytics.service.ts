@@ -1,11 +1,13 @@
 /** Analytics computed from real application data (no hardcoded numbers). */
 import { getDb } from '../db/database.js';
 import { requireProject } from './projects.service.js';
+import { toStory, toTask, type StoryRow, type TaskRow } from './mappers.js';
 import { getVelocity, computeSprintMetrics } from './sprints.service.js';
 import type {
   AIUsageStats,
   DashboardStats,
   ExecutionStats,
+  MyWork,
   SprintMetrics,
 } from '@devflow/shared';
 
@@ -159,5 +161,47 @@ export function getProjectAnalytics(
   return {
     velocity: getVelocity(projectId, userId),
     activeSprint: active ? computeSprintMetrics(active) : null,
+  };
+}
+
+
+/** Everything assigned to the current user across their projects (My Work). */
+export function getMyWork(userId: string): MyWork {
+  const db = getDb();
+  const taskRows = db
+    .prepare(
+      `SELECT t.*, u.name AS assignee_name, p.name AS project_name, s.title AS story_title
+       FROM tasks t
+       JOIN projects p ON p.id = t.project_id
+       JOIN stories s ON s.id = t.story_id
+       LEFT JOIN users u ON u.id = t.assignee_user_id
+       WHERE t.assignee_user_id = ? AND t.status NOT IN ('done', 'cancelled')
+       ORDER BY CASE WHEN t.due_date IS NULL THEN 1 ELSE 0 END, t.due_date, t.updated_at DESC
+       LIMIT 100`
+    )
+    .all(userId) as unknown as Array<TaskRow & { project_name: string; story_title: string }>;
+
+  const storyRows = db
+    .prepare(
+      `SELECT st.*, u.name AS assignee_name, p.name AS project_name
+       FROM stories st
+       JOIN projects p ON p.id = st.project_id
+       LEFT JOIN users u ON u.id = st.assignee_user_id
+       WHERE st.assignee_user_id = ? AND st.status NOT IN ('done', 'cancelled')
+       ORDER BY CASE WHEN st.due_date IS NULL THEN 1 ELSE 0 END, st.due_date, st.updated_at DESC
+       LIMIT 100`
+    )
+    .all(userId) as unknown as Array<StoryRow & { project_name: string }>;
+
+  return {
+    tasks: taskRows.map((t) => ({
+      ...toTask(t),
+      projectName: t.project_name,
+      storyTitle: t.story_title,
+    })),
+    stories: storyRows.map((st) => ({
+      ...toStory(st),
+      projectName: st.project_name,
+    })),
   };
 }

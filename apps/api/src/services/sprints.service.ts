@@ -6,7 +6,8 @@ import { getDb, newId, nowIso, withTransaction } from '../db/database.js';
 import { AppError } from '../util/appError.js';
 import { ErrorCodes } from '@devflow/shared';
 import { recordActivity, notify } from './events.service.js';
-import { requireProject } from './projects.service.js';
+import { requireProject, requireProjectWrite } from './projects.service.js';
+import { readSprintSnapshot } from './mappers.js';
 import type {
   BacklogStatus,
   BurndownPoint,
@@ -63,7 +64,7 @@ export function listSprints(projectId: string, userId: string): Sprint[] {
 }
 
 export function createSprint(projectId: string, userId: string, input: CreateSprintInput): Sprint {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   const db = getDb();
   const id = newId();
   db.prepare(
@@ -79,7 +80,7 @@ export function updateSprint(
   userId: string,
   input: { name?: string; goal?: string; startsAt?: string | null; endsAt?: string | null }
 ): Sprint {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   const row = getSprintRow(sprintId, projectId);
   if (row.status === 'completed' || row.status === 'cancelled') {
     throw AppError.conflict(ErrorCodes.CONFLICT, `Cannot edit a ${row.status} sprint`);
@@ -97,7 +98,7 @@ export function updateSprint(
 }
 
 export function assignStory(projectId: string, sprintId: string, storyId: string, userId: string): void {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   getSprintRow(sprintId, projectId);
   const story = getDb()
     .prepare('SELECT id, title, status FROM stories WHERE id = ? AND project_id = ?')
@@ -111,13 +112,13 @@ export function assignStory(projectId: string, sprintId: string, storyId: string
 }
 
 export function unassignStory(projectId: string, sprintId: string, storyId: string, userId: string): void {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   getSprintRow(sprintId, projectId);
   getDb().prepare('UPDATE stories SET sprint_id = NULL, updated_at = ? WHERE id = ? AND sprint_id = ?').run(nowIso(), storyId, sprintId);
 }
 
 export function activateSprint(projectId: string, sprintId: string, userId: string): Sprint {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   const row = getSprintRow(sprintId, projectId);
   if (row.status !== 'planned') {
     throw AppError.conflict(ErrorCodes.CONFLICT, `Only planned sprints can be activated (current: ${row.status})`);
@@ -245,7 +246,7 @@ export function getSprintMetrics(projectId: string, sprintId: string, userId: st
 }
 
 export function completeSprint(projectId: string, sprintId: string, userId: string): SprintMetrics {
-  requireProject(projectId, userId);
+  requireProjectWrite(projectId, userId);
   const row = getSprintRow(sprintId, projectId);
   if (row.status !== 'active') {
     throw AppError.conflict(ErrorCodes.CONFLICT, `Only active sprints can be completed (current: ${row.status})`);
@@ -300,6 +301,78 @@ export function getVelocity(projectId: string, userId: string): VelocityPoint[] 
     const m = computeSprintMetrics(row);
     return { sprint: row.name, sprintId: row.id, committed: m.totalPoints, completed: m.donePoints };
   });
+}
+
+// ---------- roadmap (lightweight gantt) ----------
+
+export interface RoadmapRow {
+  id: string;
+  title: string;
+  kind: 'epic' | 'sprint';
+  start: string;
+  end: string;
+  status: string;
+  totalPoints: number;
+  donePoints: number;
+}
+
+/** Computes Gantt rows: epics span their stories (created → max due date),
+ *  sprints span their windows. Never invents dates — missing ends use starts. */
+export function getRoadmap(projectId: string, userId: string): {
+  items: RoadmapRow[];
+  minDate: string;
+  maxDate: string;
+} {
+  requireProject(projectId, userId);
+  const db = getDb();
+
+  const items: RoadmapRow[] = [];
+  const epicRows = db
+    .prepare('SELECT id, title, created_at FROM epics WHERE project_id = ? ORDER BY position')
+    .all(projectId) as Array<{ id: string; title: string; created_at: string }>;
+  for (const epic of epicRows) {
+    const stories = db
+      .prepare("SELECT created_at, due_date, points, status FROM stories WHERE epic_id = ? AND status != 'cancelled'")
+      .all(epic.id) as Array<{ created_at: string; due_date: string | null; points: number; status: string }>;
+    const total = stories.reduce((n, x) => n + x.points, 0);
+    const done = stories.filter((x) => x.status === 'done').reduce((n, x) => n + x.points, 0);
+    const starts = stories.map((x) => x.created_at).concat(epic.created_at);
+    const ends = stories.map((x) => x.due_date).filter((d): d is string => Boolean(d));
+    const start = starts.sort()[0] ?? epic.created_at;
+    const end = ends.sort().pop() ?? epic.created_at;
+    items.push({ id: epic.id, title: epic.title, kind: 'epic', start, end, status: total > 0 && done === total ? 'done' : 'open', totalPoints: total, donePoints: done });
+  }
+
+  const sprintRows = db
+    .prepare('SELECT * FROM sprints WHERE project_id = ? ORDER BY COALESCE(starts_at, created_at)')
+    .all(projectId) as unknown as Array<{
+    id: string;
+    name: string;
+    status: string;
+    starts_at: string | null;
+    ends_at: string | null;
+    completed_at: string | null;
+    created_at: string;
+    metrics_snapshot: string | null;
+  }>;
+  for (const sp of sprintRows) {
+    const snap = readSprintSnapshot(sp);
+    const start = sp.starts_at ?? sp.created_at;
+    const end = sp.ends_at ?? sp.completed_at ?? start;
+    items.push({
+      id: sp.id,
+      title: sp.name,
+      kind: 'sprint',
+      start,
+      end,
+      status: sp.status,
+      totalPoints: snap?.totalPoints ?? 0,
+      donePoints: snap?.donePoints ?? 0,
+    });
+  }
+
+  const dates = items.flatMap((i) => [i.start, i.end]).sort();
+  return { items, minDate: dates[0] ?? new Date().toISOString(), maxDate: dates[dates.length - 1] ?? new Date().toISOString() };
 }
 
 // ---------- kanban board ----------

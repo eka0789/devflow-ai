@@ -8,7 +8,7 @@ import { ErrorCodes } from '@devflow/shared';
 import { getDb, nowIso } from '../../db/database.js';
 import { GitHubClient } from './client.js';
 import { getGitHubToken } from '../settings.service.js';
-import { requireProject } from '../projects.service.js';
+import { requireProject, requireProjectWrite } from '../projects.service.js';
 import { recordAudit, recordActivity, notify } from '../events.service.js';
 import type { GitHubPR, GitHubPRFile } from '@devflow/shared';
 
@@ -36,7 +36,7 @@ export async function mergePullRequest(
   if (confirmation !== 'MERGE') {
     throw AppError.badRequest(ErrorCodes.VALIDATION_FAILED, 'Merge requires confirmation === "MERGE"');
   }
-  const project = requireProject(projectId, userId);
+  const project = requireProjectWrite(projectId, userId);
   if (!project.repo_full_name) {
     throw new AppError(400, ErrorCodes.REPO_NOT_CONNECTED, 'No GitHub repository is connected to this project.');
   }

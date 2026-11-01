@@ -10,6 +10,7 @@ import { aiRouter } from './routes/ai.routes.js';
 import { githubRouter } from './routes/github.routes.js';
 import { executionsRouter } from './routes/executions.routes.js';
 import { authedMiscRouter, webhooksRouter } from './routes/misc.routes.js';
+import { wave3Router } from './routes/wave3.routes.js';
 import { config } from './config.js';
 import { logger } from './util/logger.js';
 
@@ -41,6 +42,7 @@ export function createApp(): express.Express {
   app.use('/api', aiRouter);
   app.use('/api', githubRouter);
   app.use('/api', executionsRouter);
+  app.use('/api', wave3Router);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

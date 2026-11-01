@@ -3,7 +3,8 @@ import { AppError } from '../util/appError.js';
 import {
   recordActivity,
 } from './events.service.js';
-import { readSprintSnapshot } from './mappers.js';
+import { readSprintSnapshot, toProject as toProjectShared } from './mappers.js';
+import { getWorkspaceRole } from './workspace.service.js';
 import type {
   Activity,
   Project,
@@ -26,25 +27,20 @@ interface ProjectRow {
 }
 
 function toProject(row: ProjectRow): Project {
-  return {
-    id: row.id,
-    workspaceId: row.workspace_id,
-    ownerId: row.owner_user_id,
-    name: row.name,
-    description: row.description,
-    status: row.status as ProjectStatus,
-    techStack: JSON.parse(row.tech_stack) as string[],
-    repoFullName: row.repo_full_name,
-    repoDefaultBranch: row.repo_default_branch,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
+  return toProjectShared(row);
 }
 
 export function listProjects(userId: string): Project[] {
+  // own projects + projects of workspaces the user is a member of
   const rows = getDb()
-    .prepare('SELECT * FROM projects WHERE owner_user_id = ? ORDER BY created_at DESC')
-    .all(userId) as unknown as ProjectRow[];
+    .prepare(
+      `SELECT * FROM projects WHERE owner_user_id = ?
+       UNION
+       SELECT p.* FROM projects p JOIN workspace_members m ON m.workspace_id = p.workspace_id
+       WHERE m.user_id = ?
+       ORDER BY created_at DESC`
+    )
+    .all(userId, userId) as unknown as ProjectRow[];
   return rows.map(toProject);
 }
 
@@ -56,16 +52,31 @@ export function getProjectRow(projectId: string): ProjectRow {
   return row;
 }
 
-/** Loads a project and enforces ownership isolation. */
-export function requireProject(projectId: string, userId: string): ProjectRow {
+/**
+ * Loads a project and enforces isolation. Access: the project owner, or any
+ * member of the project's workspace (read); writing additionally requires
+ * owner/maintainer role (viewers get 403). Non-members get 404.
+ */
+export function requireProject(projectId: string, userId: string, mode: 'read' | 'write' = 'read'): ProjectRow {
   const row = getProjectRow(projectId);
-  if (row.owner_user_id !== userId) throw AppError.notFound('Project');
+  if (row.owner_user_id === userId) return row;
+  const role = getWorkspaceRole(row.workspace_id, userId);
+  if (!role) throw AppError.notFound('Project');
+  if (mode === 'write' && role === 'viewer') {
+    throw AppError.forbidden('Viewers have read-only access to this workspace');
+  }
   return row;
 }
 
 /** Ownership-checked, API-shaped project (used by routes). */
 export function getProject(projectId: string, userId: string): Project {
   return toProject(requireProject(projectId, userId));
+}
+
+/** Write-mode variant: workspace viewers get 403 (maintainers/owners pass). */
+export function requireProjectWrite(projectId: string, userId: string): ProjectRow {
+  const row = requireProject(projectId, userId, 'write');
+  return row;
 }
 
 export function createProject(
@@ -91,7 +102,7 @@ export function updateProject(
   userId: string,
   input: UpdateProjectInput
 ): Project {
-  const row = requireProject(projectId, userId);
+  const row = requireProject(projectId, userId, 'write');
   const next = {
     name: input.name ?? row.name,
     description: input.description ?? row.description,
@@ -108,7 +119,7 @@ export function updateProject(
 }
 
 export function deleteProject(projectId: string, userId: string): void {
-  requireProject(projectId, userId);
+  requireProject(projectId, userId, 'write');
   getDb().prepare('DELETE FROM projects WHERE id = ?').run(projectId);
 }
 
@@ -118,7 +129,7 @@ export function setRepo(
   repoFullName: string | null,
   defaultBranch: string | null
 ): Project {
-  requireProject(projectId, userId);
+  requireProject(projectId, userId, 'write');
   getDb()
     .prepare('UPDATE projects SET repo_full_name = ?, repo_default_branch = ?, updated_at = ? WHERE id = ?')
     .run(repoFullName, defaultBranch, nowIso(), projectId);
@@ -204,6 +215,9 @@ export interface ProjectExport {
     committedPoints: number | null;
     completedPoints: number | null;
   }>;
+  labels: Array<{ id: string; name: string; color: string }>;
+  storyLabels: Array<{ storyId: string; labelId: string }>;
+  taskLabels: Array<{ taskId: string; labelId: string }>;
   dependencies: { stories: Array<[string, string]>; tasks: Array<[string, string]> };
 }
 
@@ -309,6 +323,16 @@ export function exportProject(projectId: string, userId: string): ProjectExport 
     .prepare('SELECT td.task_id, td.depends_on_task_id FROM task_dependencies td JOIN tasks t ON t.id = td.task_id WHERE t.project_id = ?')
     .all(projectId) as unknown as Array<[string, string]>;
 
+  const labelRows = db
+    .prepare('SELECT id, name, color FROM labels WHERE project_id = ? ORDER BY name')
+    .all(projectId) as ProjectExport['labels'];
+  const storyLabelRows = db
+    .prepare('SELECT sl.story_id AS "storyId", sl.label_id AS "labelId" FROM story_labels sl JOIN stories s ON s.id = sl.story_id WHERE s.project_id = ?')
+    .all(projectId) as ProjectExport['storyLabels'];
+  const taskLabelRows = db
+    .prepare('SELECT tl.task_id AS "taskId", tl.label_id AS "labelId" FROM task_labels tl JOIN tasks t ON t.id = tl.task_id WHERE t.project_id = ?')
+    .all(projectId) as ProjectExport['taskLabels'];
+
   return {
     exportedAt: new Date().toISOString(),
     format: 'devflow-project/v1',
@@ -317,6 +341,9 @@ export function exportProject(projectId: string, userId: string): ProjectExport 
     stories,
     tasks,
     sprints,
+    labels: labelRows,
+    storyLabels: storyLabelRows,
+    taskLabels: taskLabelRows,
     dependencies: { stories: storyDeps, tasks: taskDeps },
   };
 }

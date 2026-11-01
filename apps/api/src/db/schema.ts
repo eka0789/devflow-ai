@@ -287,6 +287,69 @@ const MIGRATIONS: string[] = [
     ON agent_runs(project_id) WHERE status = 'running';
   CREATE INDEX IF NOT EXISTS idx_webhook_events_project ON webhook_events(project_id, event);
   `,
+
+  // v5 — collaboration wave: assignee/due dates, labels, workspace members,
+  // invites, outgoing webhooks
+  `
+  ALTER TABLE stories ADD COLUMN assignee_user_id TEXT;
+  ALTER TABLE stories ADD COLUMN due_date TEXT;
+  ALTER TABLE tasks ADD COLUMN assignee_user_id TEXT;
+  ALTER TABLE tasks ADD COLUMN due_date TEXT;
+
+  CREATE TABLE labels (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#6E7BFF',
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX idx_labels_project ON labels(project_id);
+
+  CREATE TABLE story_labels (
+    story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    label_id TEXT NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+    PRIMARY KEY (story_id, label_id)
+  );
+
+  CREATE TABLE task_labels (
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    label_id TEXT NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+    PRIMARY KEY (task_id, label_id)
+  );
+
+  CREATE TABLE workspace_members (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'viewer',
+    created_at TEXT NOT NULL,
+    UNIQUE (workspace_id, user_id)
+  );
+  CREATE INDEX idx_workspace_members_user ON workspace_members(user_id);
+
+  CREATE TABLE workspace_invites (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'viewer',
+    invited_by_user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    accepted_at TEXT,
+    UNIQUE (workspace_id, email)
+  );
+  CREATE INDEX idx_workspace_invites_email ON workspace_invites(email);
+
+  CREATE TABLE outgoing_webhooks (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    secret_enc TEXT,
+    format TEXT NOT NULL DEFAULT 'generic',
+    events TEXT NOT NULL DEFAULT '["*"]',
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+  );
+  `,
 ];
 
 export function runMigrations(db: DatabaseSync): void {
