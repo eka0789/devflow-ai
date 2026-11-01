@@ -1,10 +1,29 @@
-import { useState, type JSX } from 'react';
-import type { BacklogStatus, Comment, Priority, Sprint, Subtask, Task } from '@devflow/shared';
+import { useMemo, useState, type JSX } from 'react';
+import type {
+  BacklogStatus,
+  Comment,
+  Label,
+  LabelAssignment,
+  Priority,
+  Sprint,
+  Subtask,
+  Task,
+  WorkspaceMember,
+  WorkspaceRoster,
+} from '@devflow/shared';
 import { VALID_TRANSITIONS } from '@devflow/shared';
 import { api } from '../lib/api';
 import { formatRelative, titleCase, useApi, useAuth, useProjectRequired, useToast } from '../lib/hooks';
-import { normalizeTaskDetail, type BoardPayload, type BoardTask, type TaskDetailPayload } from '../lib/types';
+import {
+  normalizeBacklogTree,
+  normalizeTaskDetail,
+  type BacklogTree,
+  type BoardPayload,
+  type BoardTask,
+  type TaskDetailPayload,
+} from '../lib/types';
 import { PriorityBadge, StatusBadge } from '../components/Badge';
+import { DueChip, InitialsChip, LabelDots } from '../components/Chips';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Drawer } from '../components/Drawer';
 import { EmptyState } from '../components/EmptyState';
@@ -24,20 +43,44 @@ const COLUMNS: Array<{ status: BacklogStatus; dot: string }> = [
 
 const PRIORITIES: Priority[] = ['low', 'medium', 'high', 'critical'];
 
+/** Renders comment bodies with @handles highlighted in the accent color. */
+function CommentBody({ body }: { body: string }): JSX.Element {
+  const parts = body.split(/(@[A-Za-z0-9._-]+)/g);
+  return (
+    <div className="text-sm" style={{ whiteSpace: 'pre-wrap', marginTop: 2 }}>
+      {parts.map((part, i) =>
+        /^@[A-Za-z0-9._-]+$/.test(part) ? (
+          <span key={i} className="weight-600" style={{ color: 'var(--accent-strong)' }}>
+            {part}
+          </span>
+        ) : (
+          <span key={i}>{part}</span>
+        ),
+      )}
+    </div>
+  );
+}
+
 // ---------- task drawer ----------
 
 function TaskDrawer({
   taskId,
   projectId,
   boardTasks,
+  members,
+  projectLabels,
   onClose,
   onChanged,
+  onMetaChanged,
 }: {
   taskId: string | null;
   projectId: string;
   boardTasks: BoardTask[];
+  members: WorkspaceMember[];
+  projectLabels: Label[];
   onClose: () => void;
   onChanged: () => void;
+  onMetaChanged: () => void;
 }): JSX.Element {
   const toast = useToast();
   const { data, loading, error, reload } = useApi<TaskDetailPayload | null>(
@@ -53,6 +96,8 @@ function TaskDrawer({
   const task = data?.task;
   const story = data?.story;
   const subtasks: Subtask[] = data?.subtasks ?? [];
+  const timeline = data?.timeline ?? [];
+  const taskLabels: LabelAssignment[] = data?.labels ?? [];
 
   const patchTask = async (body: Record<string, unknown>): Promise<void> => {
     if (!task) return;
@@ -60,8 +105,21 @@ function TaskDrawer({
       await api.patch(`/projects/${projectId}/tasks/${task.id}`, body);
       reload();
       onChanged();
+      onMetaChanged();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to update task');
+    }
+  };
+
+  const setTaskLabels = async (labelIds: string[]): Promise<void> => {
+    if (!task) return;
+    try {
+      await api.put(`/projects/${projectId}/tasks/${task.id}/labels`, { labelIds });
+      reload();
+      onChanged();
+      onMetaChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update labels');
     }
   };
 
@@ -277,6 +335,67 @@ function TaskDrawer({
             )}
           </Field>
 
+          <div className="grid grid-2">
+            <Field label="Assignee">
+              <Select
+                value={task.assigneeUserId ?? ''}
+                onChange={(e) => void patchTask({ assigneeUserId: e.target.value || null })}
+                aria-label="Assignee"
+              >
+                <option value="">Unassigned</option>
+                {members.map((m) => (
+                  <option key={m.userId} value={m.userId}>
+                    {m.userName ?? m.userEmail ?? 'Unknown member'}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Due date">
+              <div className="row gap-2">
+                <Input
+                  type="date"
+                  value={task.dueDate ? task.dueDate.slice(0, 10) : ''}
+                  onChange={(e) => void patchTask({ dueDate: e.target.value || null })}
+                  aria-label="Due date"
+                />
+                {task.dueDate ? (
+                  <button className="btn btn-ghost btn-sm" onClick={() => void patchTask({ dueDate: null })}>
+                    Clear
+                  </button>
+                ) : null}
+              </div>
+            </Field>
+          </div>
+
+          <Field label="Labels">
+            {projectLabels.length === 0 ? (
+              <div className="faint text-sm">No labels in this project yet — create them in the backlog.</div>
+            ) : (
+              <div className="stack gap-1" style={{ maxHeight: 160, overflowY: 'auto' }}>
+                {projectLabels.map((l) => {
+                  const checked = taskLabels.some((t) => t.labelId === l.id);
+                  return (
+                    <label key={l.id} className="row gap-2 text-sm" style={{ cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        className="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          void setTaskLabels(
+                            checked ? taskLabels.filter((t) => t.labelId !== l.id).map((t) => t.labelId) : [...taskLabels.map((t) => t.labelId), l.id],
+                          )
+                        }
+                        aria-label={`Label ${l.name}`}
+                      />
+                      <span className="chip-dot" style={{ background: l.color }} />
+                      {l.name}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </Field>
+
           <div className="stack gap-2">
             <div className="uppercase-label">Subtasks</div>
             {subtasks.map((sub) => (
@@ -328,6 +447,25 @@ function TaskDrawer({
           </div>
 
           <div className="stack gap-2">
+            <div className="uppercase-label">History</div>
+            {timeline.length === 0 ? (
+              <div className="faint text-sm">No activity yet.</div>
+            ) : (
+              <div className="stack gap-2">
+                {timeline.map((entry, i) => (
+                  <div key={i} className="row gap-2 text-sm">
+                    <span className={`timeline-kind-dot ${entry.kind}`} aria-hidden="true" />
+                    <span className="flex-1">{entry.label}</span>
+                    <span className="faint" title={entry.at}>
+                      {formatRelative(entry.at)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="stack gap-2">
             <div className="uppercase-label">Comments ({comments.length})</div>
             {comments.length === 0 ? (
               <div className="faint text-sm">No comments yet — start the discussion.</div>
@@ -339,9 +477,7 @@ function TaskDrawer({
                       <span className="weight-600 text-sm">{c.userName ?? 'Unknown'}</span>
                       <span className="faint text-sm">{formatRelative(c.createdAt)}</span>
                     </div>
-                    <div className="text-sm" style={{ whiteSpace: 'pre-wrap', marginTop: 2 }}>
-                      {c.body}
-                    </div>
+                    <CommentBody body={c.body} />
                     {authUser && c.userId === authUser.id ? (
                       <div className="row justify-end" style={{ marginTop: 4 }}>
                         <button
@@ -417,12 +553,37 @@ export function SprintBoard(): JSX.Element {
     () => api.get<unknown>(`/projects/${projectId}/board`) as Promise<BoardPayload>,
     [projectId],
   );
+  // The board payload is lean; the backlog tree provides assignee/due/label metadata per task.
+  const backlog = useApi<BacklogTree | null>(
+    () => api.get<unknown>(`/projects/${projectId}/backlog`).then(normalizeBacklogTree),
+    [projectId],
+  );
+  const roster = useApi<WorkspaceRoster>(() => api.get<WorkspaceRoster>('/workspace/roster'), []);
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
   const [dragOverCol, setDragOverCol] = useState<BacklogStatus | null>(null);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
 
   const tasks = data?.tasks ?? [];
   const activeSprint: Sprint | null = data?.activeSprint ?? null;
+  const members = roster.data?.members ?? [];
+  const projectLabels = useMemo(
+    () => [...(backlog.data?.labels ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
+    [backlog.data],
+  );
+
+  const taskMeta = useMemo(() => {
+    const map = new Map<string, { assigneeName: string | null; dueDate: string | null; labels: LabelAssignment[] }>();
+    const labelById = new Map((backlog.data?.labels ?? []).map((l) => [l.id, l]));
+    for (const t of backlog.data?.tasks ?? []) {
+      map.set(t.id, { assigneeName: t.assigneeName, dueDate: t.dueDate, labels: [] });
+    }
+    for (const link of backlog.data?.taskLabels ?? []) {
+      const meta = map.get(link.taskId);
+      const label = labelById.get(link.labelId);
+      if (meta && label) meta.labels.push({ labelId: label.id, name: label.name, color: label.color });
+    }
+    return map;
+  }, [backlog.data]);
 
   const drop = async (status: BacklogStatus): Promise<void> => {
     setDragOverCol(null);
@@ -515,37 +676,47 @@ export function SprintBoard(): JSX.Element {
                   {colTasks.length === 0 ? (
                     <div className="kanban-empty">Drop tasks here</div>
                   ) : (
-                    colTasks.map((task) => (
-                      <div
-                        key={task.id}
-                        className={`kanban-card ${dragTaskId === task.id ? 'dragging' : ''}`}
-                        draggable
-                        onDragStart={(e) => {
-                          setDragTaskId(task.id);
-                          e.dataTransfer.effectAllowed = 'move';
-                          e.dataTransfer.setData('text/plain', task.id);
-                        }}
-                        onDragEnd={() => {
-                          setDragTaskId(null);
-                          setDragOverCol(null);
-                        }}
-                        onClick={() => setOpenTaskId(task.id)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') setOpenTaskId(task.id);
-                        }}
-                        aria-label={`Task: ${task.title}`}
-                      >
-                        <div className="kanban-card-title">{task.title}</div>
-                        <div className="kanban-card-meta">
-                          <PriorityBadge priority={task.priority} />
-                          <span className="faint text-sm truncate" style={{ maxWidth: 160 }}>
-                            {task.storyTitle}
-                          </span>
+                    colTasks.map((task) => {
+                      const meta = taskMeta.get(task.id);
+                      return (
+                        <div
+                          key={task.id}
+                          className={`kanban-card ${dragTaskId === task.id ? 'dragging' : ''}`}
+                          draggable
+                          onDragStart={(e) => {
+                            setDragTaskId(task.id);
+                            e.dataTransfer.effectAllowed = 'move';
+                            e.dataTransfer.setData('text/plain', task.id);
+                          }}
+                          onDragEnd={() => {
+                            setDragTaskId(null);
+                            setDragOverCol(null);
+                          }}
+                          onClick={() => setOpenTaskId(task.id)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') setOpenTaskId(task.id);
+                          }}
+                          aria-label={`Task: ${task.title}`}
+                        >
+                          <div className="kanban-card-title">{task.title}</div>
+                          {meta && (meta.assigneeName || meta.dueDate || meta.labels.length > 0) ? (
+                            <div className="row gap-2 wrap">
+                              <LabelDots labels={meta.labels} />
+                              <InitialsChip name={meta.assigneeName} />
+                              <DueChip dueDate={meta.dueDate} status={task.status} />
+                            </div>
+                          ) : null}
+                          <div className="kanban-card-meta">
+                            <PriorityBadge priority={task.priority} />
+                            <span className="faint text-sm truncate" style={{ maxWidth: 160 }}>
+                              {task.storyTitle}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -558,8 +729,11 @@ export function SprintBoard(): JSX.Element {
         taskId={openTaskId}
         projectId={projectId}
         boardTasks={tasks}
+        members={members}
+        projectLabels={projectLabels}
         onClose={() => setOpenTaskId(null)}
         onChanged={reload}
+        onMetaChanged={backlog.reload}
       />
     </div>
   );

@@ -1,5 +1,21 @@
 # Changelog — DevFlow AI
 
+## 0.3.0 — 2026-11-01 (collaboration & delivery wave)
+
+### Added
+- **Multi-member workspaces**: owner/maintainer/viewer roles, invite-by-email (pending invites activate when the invited email registers or logs in), roster management with role changes and removal. Project access is now workspace-scoped: members read all workspace projects, maintainers/owners write, viewers get `403` on writes — enforced across every mutating service.
+- **Assignee + due date** on stories and tasks (assignees must be workspace members), surfaced in the backlog, kanban and a new cross-project **My Work** view.
+- **Labels**: project-scoped colored labels with story/task assignment, backlog tree integration and filtering.
+- **Task timeline**: per-task history composed from real status events, AI executions and comments.
+- **@mentions** in comments notify workspace members.
+- **Roadmap**: lightweight Gantt rows computed from real epic/sprint dates and points.
+- **Project import**: `devflow-project/v1` round-trip with fresh IDs and remapped references; exports now carry labels.
+- **Outgoing webhooks**: generic/Discord/Slack formats, HMAC-signed deliveries, event filtering, test endpoint; fans out on every notification. (Email notifications remain future work — documented, awaiting SMTP configuration.)
+
+### Deferred (recorded)
+- Per-field custom fields (labels + assignee + due dates cover the main need).
+- Multi-workspace switcher UI (members access shared projects in the unified list).
+
 ## 0.2.0 — 2026-11-01 (review pass + feature wave 2)
 
 ### Added

@@ -6,10 +6,12 @@ import { ProjectSwitcher } from './ProjectSwitcher';
 import {
   IconChart,
   IconChat,
+  IconCheck,
   IconCommand,
   IconDashboard,
   IconGitHub,
   IconKanban,
+  IconLayers,
   IconList,
   IconSettings,
   IconSprint,
@@ -37,6 +39,7 @@ export function Sidebar(): JSX.Element {
 
   const workspaceNav: NavEntry[] = [
     { to: '/', label: 'Dashboard', icon: <IconDashboard size={15} />, end: true },
+    { to: '/my-work', label: 'My Work', icon: <IconCheck size={15} />, end: true },
     { to: '/chat', label: 'AI Chat', icon: <IconChat size={15} />, end: true },
     { to: '/analytics', label: 'Analytics', icon: <IconChart size={15} />, end: true },
     { to: '/executions', label: 'Executions', icon: <IconZap size={15} />, end: true },
@@ -49,6 +52,7 @@ export function Sidebar(): JSX.Element {
         { to: `/projects/${projectId}`, label: 'Overview', icon: <IconDashboard size={15} />, end: true },
         { to: `/projects/${projectId}/backlog`, label: 'Backlog', icon: <IconList size={15} /> },
         { to: `/projects/${projectId}/board`, label: 'Board', icon: <IconKanban size={15} /> },
+        { to: `/projects/${projectId}/roadmap`, label: 'Roadmap', icon: <IconLayers size={15} /> },
         { to: `/projects/${projectId}/sprints`, label: 'Sprints', icon: <IconSprint size={15} /> },
         { to: `/projects/${projectId}/planning`, label: 'AI Planning', icon: <IconSparkles size={15} /> },
         { to: `/projects/${projectId}/github`, label: 'GitHub', icon: <IconGitHub size={15} /> },

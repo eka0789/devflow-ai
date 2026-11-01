@@ -8,10 +8,12 @@ import { colorFor } from './ProjectSwitcher';
 import {
   IconChart,
   IconChat,
+  IconCheck,
   IconCornerDownLeft,
   IconDashboard,
   IconGitHub,
   IconKanban,
+  IconLayers,
   IconList,
   IconSettings,
   IconSprint,
@@ -140,6 +142,7 @@ export function CommandPalette(): JSX.Element {
   const commands = useMemo<Command[]>(() => {
     const base: Command[] = [
       { id: 'dashboard', label: 'Dashboard', group: 'Navigate', icon: <IconDashboard size={15} />, run: () => go('/') },
+      { id: 'my-work', label: 'My Work', group: 'Navigate', icon: <IconCheck size={15} />, run: () => go('/my-work') },
       { id: 'chat', label: 'AI Chat', group: 'Navigate', icon: <IconChat size={15} />, run: () => go('/chat') },
       { id: 'analytics', label: 'Analytics', group: 'Navigate', icon: <IconChart size={15} />, run: () => go('/analytics') },
       { id: 'executions', label: 'Executions', group: 'Navigate', icon: <IconZap size={15} />, run: () => go('/executions') },
@@ -152,6 +155,7 @@ export function CommandPalette(): JSX.Element {
         { id: 'p-overview', label: 'Project Overview', group: 'This project', icon: <IconDashboard size={15} />, run: () => go(`/projects/${pid}`) },
         { id: 'p-backlog', label: 'Backlog', group: 'This project', icon: <IconList size={15} />, run: () => go(`/projects/${pid}/backlog`) },
         { id: 'p-board', label: 'Sprint Board', group: 'This project', icon: <IconKanban size={15} />, run: () => go(`/projects/${pid}/board`) },
+        { id: 'p-roadmap', label: 'Roadmap', group: 'This project', icon: <IconLayers size={15} />, run: () => go(`/projects/${pid}/roadmap`) },
         { id: 'p-sprints', label: 'Sprints', group: 'This project', icon: <IconSprint size={15} />, run: () => go(`/projects/${pid}/sprints`) },
         { id: 'p-planning', label: 'AI Planning', group: 'This project', icon: <IconSparkles size={15} />, run: () => go(`/projects/${pid}/planning`) },
         { id: 'p-github', label: 'GitHub', group: 'This project', icon: <IconGitHub size={15} />, run: () => go(`/projects/${pid}/github`) },

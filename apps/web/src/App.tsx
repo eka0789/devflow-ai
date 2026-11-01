@@ -14,7 +14,9 @@ import { AnalyticsPage } from './pages/AnalyticsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { GitHubPage } from './pages/GitHubPage';
 import { Login } from './pages/Login';
+import { MyWorkPage } from './pages/MyWorkPage';
 import { PlanningPage } from './pages/PlanningPage';
+import { RoadmapPage } from './pages/RoadmapPage';
 import { ProjectBacklog } from './pages/ProjectBacklog';
 import { ProjectOverview } from './pages/ProjectOverview';
 import { ProjectSettings } from './pages/ProjectSettings';
@@ -105,6 +107,7 @@ export default function App(): JSX.Element {
             <Route index element={<ProjectOverview />} />
             <Route path="backlog" element={<ProjectBacklog />} />
             <Route path="board" element={<SprintBoard />} />
+            <Route path="roadmap" element={<RoadmapPage />} />
             <Route path="sprints" element={<SprintPage />} />
             <Route path="planning" element={<PlanningPage />} />
             <Route path="github" element={<GitHubPage />} />
@@ -115,6 +118,7 @@ export default function App(): JSX.Element {
           </Route>
 
           <Route path="/chat" element={<ChatPage />} />
+          <Route path="/my-work" element={<MyWorkPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/executions" element={<ExecutionsPage />} />
           <Route path="/settings" element={<SettingsPage />} />

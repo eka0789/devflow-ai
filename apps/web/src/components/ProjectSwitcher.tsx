@@ -1,14 +1,14 @@
 /** Sidebar project switcher: pick a project, create a new one, or go to all projects. */
-import { useState, type JSX } from 'react';
+import { useRef, useState, type JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Project } from '@devflow/shared';
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import { useApi, useClickOutside, useToast, type ProjectCtx } from '../lib/hooks';
 import { Badge } from './Badge';
 import { Field, Input, Textarea } from './Field';
 import { Modal } from './Modal';
 import { Skeleton } from './Skeleton';
-import { IconChevronDown, IconFolder, IconPlus } from './icons';
+import { IconChevronDown, IconExternal, IconFolder, IconPlus } from './icons';
 
 export function colorFor(name: string): string {
   const palette = ['#6e7bff', '#9b6eff', '#4cc2ff', '#3fb68b', '#e0a458', '#e5484d', '#f171a1'];
@@ -152,20 +152,47 @@ export function ProjectSwitcher({ current }: { current: ProjectCtx | null }): JS
   );
 }
 
+export interface ImportCounts {
+  epics: number;
+  stories: number;
+  tasks: number;
+  subtasks: number;
+  sprints: number;
+}
+
+/** Turns a failed import into a readable message, surfacing 422 validation details. */
+function importErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    const details = err.details as { issues?: Array<{ path: string; message: string }> } | undefined;
+    if (details?.issues?.length) {
+      return `${err.message} — ${details.issues.map((i) => `${i.path}: ${i.message}`).join('; ')}`;
+    }
+    return err.message;
+  }
+  return err instanceof Error ? err.message : 'Import failed';
+}
+
 export function CreateProjectModal({
   open,
   onClose,
   onCreated,
+  onImported,
 }: {
   open: boolean;
   onClose: () => void;
   onCreated: (project: Project) => void;
+  /** When provided, imports skip the fetch-and-onCreated path and hand over the raw result. */
+  onImported?: (projectId: string, counts: ImportCounts) => void;
 }): JSX.Element {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [techStack, setTechStack] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const toast = useToast();
 
   const submit = async (): Promise<void> => {
     setBusy(true);
@@ -191,6 +218,49 @@ export function CreateProjectModal({
     }
   };
 
+  const handleImport = (file: File): void => {
+    setImporting(true);
+    setImportError(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(String(reader.result ?? ''));
+      } catch {
+        setImporting(false);
+        setImportError('That file is not valid JSON.');
+        return;
+      }
+      api
+        .post<{ projectId: string; counts: ImportCounts }>('/projects/import', {
+          ...(name.trim() ? { name: name.trim() } : {}),
+          data: parsed,
+        })
+        .then((result) => {
+          setImporting(false);
+          const c = result.counts;
+          toast.success(`Project imported — ${c.epics} epics, ${c.stories} stories, ${c.tasks} tasks, ${c.subtasks} subtasks, ${c.sprints} sprints`);
+          setName('');
+          setDescription('');
+          setTechStack('');
+          if (onImported) {
+            onImported(result.projectId, result.counts);
+          } else {
+            return api.get<Project>(`/projects/${result.projectId}`).then(onCreated);
+          }
+        })
+        .catch((err: unknown) => {
+          setImporting(false);
+          setImportError(importErrorMessage(err));
+        });
+    };
+    reader.onerror = () => {
+      setImporting(false);
+      setImportError('Failed to read the selected file.');
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <Modal
       open={open}
@@ -198,10 +268,10 @@ export function CreateProjectModal({
       title="New project"
       footer={
         <>
-          <button className="btn" onClick={onClose} disabled={busy}>
+          <button className="btn" onClick={onClose} disabled={busy || importing}>
             Cancel
           </button>
-          <button className="btn btn-primary" onClick={() => void submit()} disabled={busy || name.trim().length < 2}>
+          <button className="btn btn-primary" onClick={() => void submit()} disabled={busy || importing || name.trim().length < 2}>
             {busy ? <span className="spinner" /> : <IconPlus size={14} />}
             Create project
           </button>
@@ -231,6 +301,29 @@ export function CreateProjectModal({
           <Input value={techStack} onChange={(e) => setTechStack(e.target.value)} placeholder="React, Node.js, PostgreSQL" />
         </Field>
         <button type="submit" style={{ display: 'none' }} aria-hidden="true" tabIndex={-1} />
+        <hr className="divider" />
+        <div className="stack gap-2">
+          <div className="uppercase-label">or import</div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json,application/json"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (file) handleImport(file);
+            }}
+          />
+          <div className="row gap-2 wrap">
+            <button type="button" className="btn" onClick={() => fileRef.current?.click()} disabled={busy || importing}>
+              {importing ? <span className="spinner" /> : <IconExternal size={14} />}
+              {importing ? 'Importing…' : 'Import project JSON'}
+            </button>
+            <span className="faint text-sm">Accepts a devflow-project/v1 export file.</span>
+          </div>
+          {importError ? <div className="form-error">{importError}</div> : null}
+        </div>
       </form>
     </Modal>
   );

@@ -184,6 +184,12 @@ export function Dashboard(): JSX.Element {
           void stats.reload();
           navigate(`/projects/${project.id}`);
         }}
+        onImported={(projectId) => {
+          setCreatingFlag(false);
+          void projects.reload();
+          void stats.reload();
+          navigate(`/projects/${projectId}`);
+        }}
       />
     </div>
   );

@@ -19,6 +19,7 @@ import {
 const SECTION_TITLES: Array<[RegExp, string]> = [
   [/\/projects\/[^/]+\/backlog/, 'Backlog'],
   [/\/projects\/[^/]+\/board/, 'Sprint Board'],
+  [/\/projects\/[^/]+\/roadmap/, 'Roadmap'],
   [/\/projects\/[^/]+\/sprints/, 'Sprints'],
   [/\/projects\/[^/]+\/planning/, 'AI Planning'],
   [/\/projects\/[^/]+\/github/, 'GitHub'],
@@ -27,6 +28,7 @@ const SECTION_TITLES: Array<[RegExp, string]> = [
   [/\/projects\/[^/]+\/settings/, 'Project Settings'],
   [/\/projects\/[^/]+$/, 'Project Overview'],
   [/^\/chat/, 'AI Chat'],
+  [/^\/my-work/, 'My Work'],
   [/^\/analytics/, 'Analytics'],
   [/^\/executions/, 'Executions'],
   [/^\/settings/, 'Settings'],

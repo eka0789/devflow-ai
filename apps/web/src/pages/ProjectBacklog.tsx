@@ -1,10 +1,22 @@
 import { useMemo, useState, type JSX } from 'react';
-import type { BacklogStatus, Epic, Priority, Story, Subtask, Task } from '@devflow/shared';
+import type {
+  BacklogStatus,
+  Epic,
+  Label,
+  LabelAssignment,
+  Priority,
+  Story,
+  Subtask,
+  Task,
+  WorkspaceMember,
+  WorkspaceRoster,
+} from '@devflow/shared';
 import { VALID_TRANSITIONS } from '@devflow/shared';
 import { api } from '../lib/api';
 import { titleCase, useApi, useProjectRequired, useToast } from '../lib/hooks';
 import { normalizeBacklogTree, type BacklogTree } from '../lib/types';
 import { PriorityBadge } from '../components/Badge';
+import { AssigneeChip, DueChip, LabelDots } from '../components/Chips';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ErrorState } from '../components/ErrorState';
 import { EmptyState } from '../components/EmptyState';
@@ -23,6 +35,101 @@ import {
 const POINTS = [0, 1, 2, 3, 5, 8, 13];
 const PRIORITIES: Priority[] = ['low', 'medium', 'high', 'critical'];
 const STATUSES: BacklogStatus[] = ['backlog', 'todo', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled'];
+
+const COLOR_INPUT_STYLE = {
+  width: 44,
+  height: 30,
+  border: '1px solid var(--border)',
+  borderRadius: 6,
+  background: 'transparent',
+  cursor: 'pointer',
+} as const;
+
+// ---------- label picker (story & task modals) ----------
+
+function LabelPicker({
+  labels,
+  selected,
+  onToggle,
+  onCreate,
+}: {
+  labels: Label[];
+  selected: string[];
+  onToggle: (labelId: string) => void;
+  onCreate: (name: string, color: string) => Promise<void>;
+}): JSX.Element {
+  const [name, setName] = useState('');
+  const [color, setColor] = useState('#6E7BFF');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const create = async (): Promise<void> => {
+    const trimmed = name.trim();
+    if (trimmed.length < 2) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onCreate(trimmed, color);
+      setName('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create label');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Field label="Labels">
+      <div className="stack gap-2">
+        {labels.length === 0 ? (
+          <div className="faint text-sm">No labels yet — create the first one below.</div>
+        ) : (
+          <div className="stack gap-1" style={{ maxHeight: 148, overflowY: 'auto' }}>
+            {labels.map((l) => (
+              <label key={l.id} className="row gap-2 text-sm" style={{ cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  className="checkbox"
+                  checked={selected.includes(l.id)}
+                  onChange={() => onToggle(l.id)}
+                  aria-label={`Label ${l.name}`}
+                />
+                <span className="chip-dot" style={{ background: l.color }} />
+                {l.name}
+              </label>
+            ))}
+          </div>
+        )}
+        <div className="row gap-2">
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="New label name"
+            maxLength={40}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void create();
+              }
+            }}
+          />
+          <input
+            type="color"
+            value={color}
+            onChange={(e) => setColor(e.target.value)}
+            style={COLOR_INPUT_STYLE}
+            aria-label="New label color"
+          />
+          <button type="button" className="btn btn-sm" onClick={() => void create()} disabled={busy || name.trim().length < 2}>
+            <IconPlus size={12} />
+            Add
+          </button>
+        </div>
+        {error ? <div className="field-error">{error}</div> : null}
+      </div>
+    </Field>
+  );
+}
 
 // ---------- status dropdown ----------
 
@@ -134,18 +241,26 @@ function StoryModal({
   openNonce,
   initialEpicId,
   epics,
+  members,
+  labels,
+  initialLabelIds,
   projectId,
   onClose,
   onSaved,
+  onLabelsChanged,
 }: {
   open: boolean;
   story: Story | null;
   openNonce: number;
   initialEpicId: string | null;
   epics: Epic[];
+  members: WorkspaceMember[];
+  labels: Label[];
+  initialLabelIds: string[];
   projectId: string;
   onClose: () => void;
   onSaved: () => void;
+  onLabelsChanged: () => void;
 }): JSX.Element {
   const [title, setTitle] = useState('');
   const [epicId, setEpicId] = useState<string>('');
@@ -153,6 +268,9 @@ function StoryModal({
   const [points, setPoints] = useState(3);
   const [priority, setPriority] = useState<Priority>('medium');
   const [criteria, setCriteria] = useState<string[]>([]);
+  const [assignee, setAssignee] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
@@ -167,8 +285,21 @@ function StoryModal({
     setPoints(story?.points ?? 3);
     setPriority(story?.priority ?? 'medium');
     setCriteria(story?.acceptanceCriteria ?? []);
+    setAssignee(story?.assigneeUserId ?? '');
+    setDueDate(story?.dueDate ? story.dueDate.slice(0, 10) : '');
+    setSelectedLabels(story ? initialLabelIds : []);
     setError(null);
   }
+
+  const toggleLabel = (labelId: string): void => {
+    setSelectedLabels((prev) => (prev.includes(labelId) ? prev.filter((id) => id !== labelId) : [...prev, labelId]));
+  };
+
+  const createLabel = async (name: string, color: string): Promise<void> => {
+    const label = await api.post<Label>(`/projects/${projectId}/labels`, { name, color });
+    onLabelsChanged();
+    setSelectedLabels((prev) => (prev.includes(label.id) ? prev : [...prev, label.id]));
+  };
 
   const submit = async (): Promise<void> => {
     setBusy(true);
@@ -180,6 +311,9 @@ function StoryModal({
       points,
       priority,
       acceptanceCriteria: criteria.map((c) => c.trim()).filter(Boolean),
+      assigneeUserId: assignee || null,
+      dueDate: dueDate || null,
+      labelIds: selectedLabels,
     };
     try {
       if (story) {
@@ -254,6 +388,29 @@ function StoryModal({
         <Field label="Description">
           <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} maxLength={8000} />
         </Field>
+        <div className="grid grid-2">
+          <Field label="Assignee">
+            <Select value={assignee} onChange={(e) => setAssignee(e.target.value)} aria-label="Assignee">
+              <option value="">Unassigned</option>
+              {members.map((m) => (
+                <option key={m.userId} value={m.userId}>
+                  {m.userName ?? m.userEmail ?? 'Unknown member'}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Due date">
+            <div className="row gap-2">
+              <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+              {dueDate ? (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDueDate('')}>
+                  Clear
+                </button>
+              ) : null}
+            </div>
+          </Field>
+        </div>
+        <LabelPicker labels={labels} selected={selectedLabels} onToggle={toggleLabel} onCreate={createLabel} />
         <Field label="Acceptance criteria" hint="One criterion per row">
           <div className="stack gap-2">
             {criteria.map((c, i) => (
@@ -291,21 +448,30 @@ function TaskModal({
   open,
   stories,
   fixedStoryId,
+  members,
+  labels,
   projectId,
   onClose,
   onSaved,
+  onLabelsChanged,
 }: {
   open: boolean;
   stories: Story[];
   fixedStoryId: string | null;
+  members: WorkspaceMember[];
+  labels: Label[];
   projectId: string;
   onClose: () => void;
   onSaved: () => void;
+  onLabelsChanged: () => void;
 }): JSX.Element {
   const [storyId, setStoryId] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
+  const [assignee, setAssignee] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [wasOpen, setWasOpen] = useState(false);
@@ -316,10 +482,23 @@ function TaskModal({
     setTitle('');
     setDescription('');
     setPriority('medium');
+    setAssignee('');
+    setDueDate('');
+    setSelectedLabels([]);
     setError(null);
   } else if (!open && wasOpen) {
     setWasOpen(false);
   }
+
+  const toggleLabel = (labelId: string): void => {
+    setSelectedLabels((prev) => (prev.includes(labelId) ? prev.filter((id) => id !== labelId) : [...prev, labelId]));
+  };
+
+  const createLabel = async (name: string, color: string): Promise<void> => {
+    const label = await api.post<Label>(`/projects/${projectId}/labels`, { name, color });
+    onLabelsChanged();
+    setSelectedLabels((prev) => (prev.includes(label.id) ? prev : [...prev, label.id]));
+  };
 
   const submit = async (): Promise<void> => {
     setBusy(true);
@@ -330,6 +509,9 @@ function TaskModal({
         title: title.trim(),
         description: description.trim(),
         priority,
+        assigneeUserId: assignee || null,
+        dueDate: dueDate || null,
+        labelIds: selectedLabels,
       });
       onSaved();
       onClose();
@@ -345,7 +527,6 @@ function TaskModal({
       open={open}
       onClose={onClose}
       title="New task"
-      size="sm"
       footer={
         <>
           <button className="btn" onClick={onClose} disabled={busy}>
@@ -388,6 +569,29 @@ function TaskModal({
             ))}
           </Select>
         </Field>
+        <div className="grid grid-2">
+          <Field label="Assignee">
+            <Select value={assignee} onChange={(e) => setAssignee(e.target.value)} aria-label="Assignee">
+              <option value="">Unassigned</option>
+              {members.map((m) => (
+                <option key={m.userId} value={m.userId}>
+                  {m.userName ?? m.userEmail ?? 'Unknown member'}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Due date">
+            <div className="row gap-2">
+              <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+              {dueDate ? (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDueDate('')}>
+                  Clear
+                </button>
+              ) : null}
+            </div>
+          </Field>
+        </div>
+        <LabelPicker labels={labels} selected={selectedLabels} onToggle={toggleLabel} onCreate={createLabel} />
       </div>
     </Modal>
   );
@@ -483,6 +687,7 @@ function TaskBlock({
   task,
   subtasks,
   tree,
+  labels,
   projectId,
   onChanged,
   onTransition,
@@ -490,6 +695,7 @@ function TaskBlock({
   task: Task;
   subtasks: Subtask[];
   tree: BacklogTree;
+  labels: LabelAssignment[];
   projectId: string;
   onChanged: () => void;
   onTransition: (task: Task, next: BacklogStatus) => void;
@@ -536,6 +742,9 @@ function TaskBlock({
       <div className="task-row">
         <IconChevronRight size={13} style={{ color: 'var(--text-faint)', flexShrink: 0 }} />
         <span className="flex-1 truncate">{task.title}</span>
+        <LabelDots labels={labels} />
+        <AssigneeChip name={task.assigneeName} />
+        <DueChip dueDate={task.dueDate} status={task.status} />
         <PriorityBadge priority={task.priority} />
         <StatusSelect value={task.status} onChange={(next) => onTransition(task, next)} />
         <button
@@ -625,6 +834,12 @@ export function ProjectBacklog(): JSX.Element {
     [projectId],
   );
 
+  // Workspace members for assignee selects (fetched once per mount) + project labels.
+  const roster = useApi<WorkspaceRoster>(() => api.get<WorkspaceRoster>('/workspace/roster'), []);
+  const members = roster.data?.members ?? [];
+  const labelsApi = useApi<Label[]>(() => api.get<Label[]>(`/projects/${projectId}/labels`), [projectId]);
+  const projectLabels = labelsApi.data ?? [];
+
   const [epicModal, setEpicModal] = useState(false);
   const [storyModal, setStoryModal] = useState<{ open: boolean; story: Story | null; epicId: string | null; nonce: number }>({
     open: false,
@@ -638,7 +853,7 @@ export function ProjectBacklog(): JSX.Element {
   const [epicToDelete, setEpicToDelete] = useState<Epic | null>(null);
   const [storyToDelete, setStoryToDelete] = useState<Story | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [filters, setFilters] = useState({ epic: 'all', status: 'all', priority: 'all', query: '' });
+  const [filters, setFilters] = useState({ epic: 'all', status: 'all', priority: 'all', label: 'all', query: '' });
 
   const toggleExpanded = (id: string): void => {
     setExpanded((prev) => {
@@ -660,6 +875,31 @@ export function ProjectBacklog(): JSX.Element {
     }
   };
 
+  // labelId → label, and per-story / per-task resolved label assignments.
+  const labelsById = useMemo(() => new Map(projectLabels.map((l) => [l.id, l])), [projectLabels]);
+  const storyLabelMap = useMemo(() => {
+    const map = new Map<string, LabelAssignment[]>();
+    for (const link of tree?.storyLabels ?? []) {
+      const label = labelsById.get(link.labelId);
+      if (!label) continue;
+      const list = map.get(link.storyId) ?? [];
+      list.push({ labelId: label.id, name: label.name, color: label.color });
+      map.set(link.storyId, list);
+    }
+    return map;
+  }, [tree, labelsById]);
+  const taskLabelMap = useMemo(() => {
+    const map = new Map<string, LabelAssignment[]>();
+    for (const link of tree?.taskLabels ?? []) {
+      const label = labelsById.get(link.labelId);
+      if (!label) continue;
+      const list = map.get(link.taskId) ?? [];
+      list.push({ labelId: label.id, name: label.name, color: label.color });
+      map.set(link.taskId, list);
+    }
+    return map;
+  }, [tree, labelsById]);
+
   const filtered = useMemo(() => {
     if (!tree) return tree;
     const q = filters.query.trim().toLowerCase();
@@ -668,12 +908,20 @@ export function ProjectBacklog(): JSX.Element {
       if (filters.epic === 'none' && s.epicId !== null) return false;
       if (filters.status !== 'all' && s.status !== filters.status) return false;
       if (filters.priority !== 'all' && s.priority !== filters.priority) return false;
+      if (filters.label !== 'all' && !(storyLabelMap.get(s.id) ?? []).some((l) => l.labelId === filters.label)) return false;
       if (q && !s.title.toLowerCase().includes(q)) return false;
       return true;
     });
     const epics = tree.epics.filter((e) => (filters.epic === 'all' || filters.epic === 'none' ? true : e.id === filters.epic));
     return { ...tree, stories, epics };
-  }, [tree, filters]);
+  }, [tree, filters, storyLabelMap]);
+
+  // Tasks shown under stories respect the label filter too.
+  const visibleTasks = useMemo(() => {
+    const all = tree?.tasks ?? [];
+    if (filters.label === 'all') return all;
+    return all.filter((t) => (taskLabelMap.get(t.id) ?? []).some((l) => l.labelId === filters.label));
+  }, [tree, filters.label, taskLabelMap]);
 
   const groups = useMemo(() => {
     if (!filtered) return [];
@@ -803,6 +1051,19 @@ export function ProjectBacklog(): JSX.Element {
             </option>
           ))}
         </Select>
+        <Select
+          value={filters.label}
+          onChange={(e) => setFilters((f) => ({ ...f, label: e.target.value }))}
+          style={{ width: 150 }}
+          aria-label="Filter by label"
+        >
+          <option value="all">All labels</option>
+          {projectLabels.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
+            </option>
+          ))}
+        </Select>
       </div>
 
       {!tree || tree.stories.length === 0 ? (
@@ -852,7 +1113,7 @@ export function ProjectBacklog(): JSX.Element {
               ) : (
                 <div className="story-list">
                   {stories.map((story) => {
-                    const storyTasks = (tree?.tasks ?? []).filter((t) => t.storyId === story.id);
+                    const storyTasks = visibleTasks.filter((t) => t.storyId === story.id);
                     const isOpen = expanded.has(story.id);
                     return (
                       <div key={story.id} className="story-row">
@@ -876,11 +1137,14 @@ export function ProjectBacklog(): JSX.Element {
                           >
                             {story.title}
                           </span>
+                          <LabelDots labels={storyLabelMap.get(story.id) ?? []} />
                           {storyTasks.length > 0 ? (
                             <span className="faint text-sm">
                               {storyTasks.filter((t) => t.status === 'done').length}/{storyTasks.length} tasks
                             </span>
                           ) : null}
+                          <AssigneeChip name={story.assigneeName} />
+                          <DueChip dueDate={story.dueDate} status={story.status} />
                           <span className="points-pill" title="Story points">
                             {story.points}
                           </span>
@@ -949,6 +1213,7 @@ export function ProjectBacklog(): JSX.Element {
                                       task={task}
                                       subtasks={subtasksByTask.get(task.id) ?? []}
                                       tree={tree!}
+                                      labels={taskLabelMap.get(task.id) ?? []}
                                       projectId={projectId}
                                       onChanged={reload}
                                       onTransition={(t, next) => void transition('tasks', t.id, next)}
@@ -977,18 +1242,31 @@ export function ProjectBacklog(): JSX.Element {
         openNonce={storyModal.nonce}
         initialEpicId={storyModal.epicId}
         epics={epics}
+        members={members}
+        labels={projectLabels}
+        initialLabelIds={storyModal.story ? (storyLabelMap.get(storyModal.story.id) ?? []).map((l) => l.labelId) : []}
         projectId={projectId}
         onClose={() => setStoryModal((prev) => ({ ...prev, open: false }))}
         onSaved={reload}
+        onLabelsChanged={() => {
+          labelsApi.reload();
+          reload();
+        }}
       />
 
       <TaskModal
         open={taskModal.open}
         stories={allStories}
         fixedStoryId={taskModal.storyId}
+        members={members}
+        labels={projectLabels}
         projectId={projectId}
         onClose={() => setTaskModal({ open: false, storyId: null })}
         onSaved={reload}
+        onLabelsChanged={() => {
+          labelsApi.reload();
+          reload();
+        }}
       />
 
       <ConfirmDialog

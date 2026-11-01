@@ -61,19 +61,19 @@ function asPairs(raw: unknown, selfKey: string, depKey: string): Array<[string, 
 }
 
 /** Tolerantly reads [{[entityKey], labelId}] pairs, skipping malformed entries. */
-function asLabelLinks(
+function asLabelLinks<K extends 'storyId' | 'taskId'>(
   raw: unknown,
-  entityKey: 'storyId' | 'taskId',
-): Array<{ storyId?: string; taskId?: string; labelId: string }> {
+  entityKey: K,
+): Array<{ [P in K]: string } & { labelId: string }> {
   if (!Array.isArray(raw)) return [];
-  const out: Array<{ storyId?: string; taskId?: string; labelId: string }> = [];
+  const out: Array<{ [P in K]: string } & { labelId: string }> = [];
   for (const entry of raw) {
     if (!entry || typeof entry !== 'object') continue;
     const o = entry as Record<string, unknown>;
     const entityId = o[entityKey];
     const labelId = o.labelId;
     if (typeof entityId !== 'string' || typeof labelId !== 'string') continue;
-    out.push(entityKey === 'storyId' ? { storyId: entityId, labelId } : { taskId: entityId, labelId });
+    out.push({ [entityKey]: entityId, labelId } as { [P in K]: string } & { labelId: string });
   }
   return out;
 }
