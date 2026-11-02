@@ -148,7 +148,7 @@ function AIProviderSection(): JSX.Element {
         <ErrorState error={settings.error} onRetry={settings.reload} compact />
       ) : (
         <div className="stack gap-3" style={{ maxWidth: 480 }}>
-          <Field label="Base URL" hint="OpenAI-compatible endpoint, e.g. https://api.openai.com/v1">
+          <Field label="Base URL" hint="Your provider chat-completions base, e.g. https://api.openai.com/v1 - /chat/completions is appended automatically">
             <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" />
           </Field>
           <Field label="Model">

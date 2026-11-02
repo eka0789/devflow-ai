@@ -234,8 +234,10 @@ export async function verifyProvider(userId: string): Promise<{ ok: boolean; mod
   const started = Date.now();
   try {
     await provider.complete(
-      { model: aiConfig.model, messages: [{ role: 'user', content: 'Reply with exactly: ok' }], maxTokens: 8, temperature: 0 },
-      30000
+      // a generous budget: reasoning models spend the first tokens on internal
+      // reasoning and with maxTokens=8 they return NO content at all
+      { model: aiConfig.model, messages: [{ role: 'user', content: 'Reply with exactly: ok' }], maxTokens: 512, temperature: 0 },
+      45000
     );
     return { ok: true, model: aiConfig.model, latencyMs: Date.now() - started };
   } catch (err) {
