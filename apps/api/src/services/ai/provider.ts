@@ -38,6 +38,9 @@ export interface AIProvider {
 
 const RETRY_STATUS = new Set([408, 409, 429, 500, 502, 503, 504]);
 
+/** Floor for the completion budget — reasoning models need room to think. */
+export const MIN_COMPLETION_TOKENS = 512;
+
 /**
  * SSRF guard: the provider fetches a user-supplied URL, so private network
  * targets are rejected. Local LLM setups (Ollama/vLLM) can opt in with
@@ -300,7 +303,7 @@ export class OpenAICompatibleProvider implements AIProvider {
             model: req.model,
             messages: req.messages,
             temperature: req.temperature ?? 0.4,
-            max_tokens: req.maxTokens ?? 4096,
+            max_tokens: Math.max(req.maxTokens ?? 4096, MIN_COMPLETION_TOKENS),
           },
           timeoutMs
         );
@@ -312,6 +315,11 @@ export class OpenAICompatibleProvider implements AIProvider {
           continue;
         }
         // the timer above only covers headers — bound the body read as well
+        // Reasoning models (deepseek-r1, o1/o3, qwq, …) spend the FIRST tokens
+        // on internal reasoning; a tiny budget returns content:null even though
+        // the request succeeded. Guarantee room for both reasoning and answer.
+        const requestedTokens = Math.max(req.maxTokens ?? 4096, MIN_COMPLETION_TOKENS);
+
         const data = (await Promise.race([
           res.json() as Promise<unknown>,
           new Promise<never>((_, reject) =>
@@ -350,7 +358,7 @@ export class OpenAICompatibleProvider implements AIProvider {
         model: req.model,
         messages: req.messages,
         temperature: req.temperature ?? 0.4,
-        max_tokens: req.maxTokens ?? 4096,
+        max_tokens: Math.max(req.maxTokens ?? 4096, MIN_COMPLETION_TOKENS),
         stream: true,
         stream_options: { include_usage: true },
       },
