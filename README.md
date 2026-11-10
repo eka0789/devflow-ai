@@ -2,7 +2,7 @@
 
 **Personal AI Software Engineering Workspace** — plan with AI agents, manage an agile backlog, run AI code executions against your GitHub repositories, and ship through human-approved Pull Requests.
 
-![status](https://img.shields.io/badge/tests-49%2F49%20passing-brightgreen) ![build](https://img.shields.io/badge/web%20build-passing-brightgreen) ![node](https://img.shields.io/badge/node-%E2%89%A522.5-blue)
+![tests](https://img.shields.io/badge/tests-101%20passing-brightgreen) ![build](https://img.shields.io/badge/web%20build-passing-brightgreen) ![node](https://img.shields.io/badge/node-%E2%89%A522.5-blue) ![CI](https://github.com/eka0789/devflow-ai/actions/workflows/ci.yml/badge.svg)
 
 ## What it does
 
