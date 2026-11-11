@@ -4,6 +4,16 @@
 
 ![tests](https://img.shields.io/badge/tests-101%20passing-brightgreen) ![build](https://img.shields.io/badge/web%20build-passing-brightgreen) ![node](https://img.shields.io/badge/node-%E2%89%A522.5-blue) ![CI](https://github.com/eka0789/devflow-ai/actions/workflows/ci.yml/badge.svg)
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Kanban board](docs/screenshots/kanban-board.png) |
+| ![AI Planning](docs/screenshots/ai-planning.png) | ![Roadmap](docs/screenshots/roadmap.png) |
+| ![My Work](docs/screenshots/my-work.png) | ![Settings](docs/screenshots/settings.png) |
+
+*Dashboard · Sprint Board · AI agent planning · Roadmap timeline · My Work · Settings (provider, team, webhooks)*
+
 ## What it does
 
 - **Projects & workspaces** — ownership-isolated workspaces with real activity feeds.
@@ -83,3 +93,7 @@ The UI never fakes success: unconfigured integrations surface `AI_NOT_CONFIGURED
 1. **Web-first client.** The master prompt requested Flutter; this machine has no Flutter toolchain, so the product ships as a production-grade web client speaking the same REST contract (`docs/API.md`). A Flutter Android/desktop client can be built against it without backend changes (`firebase/` + contract docs prepared).
 2. **SQLite instead of Firebase/Firestore.** Zero-credential real database with WAL, migrations and transactional domain logic. The Firestore rules + emulator config for the Firebase path are included and documented.
 3. **Docker runner is fully implemented but unverified on this machine** (no Docker installed). Availability probing is honest; tests are skipped and PRs become drafts rather than pretending verification happened.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
