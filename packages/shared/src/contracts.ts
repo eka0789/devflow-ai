@@ -12,11 +12,6 @@ const isoDateOrDateTime = z
   .max(40)
   .refine((v) => !Number.isNaN(Date.parse(v)), 'must be a parseable date');
 
-export const assigneeFieldsSchema = z.object({
-  assigneeUserId: z.string().uuid().nullable().optional(),
-  dueDate: isoDateOrDateTime.nullable().optional(),
-});
-
 // ---------- auth ----------
 
 export const registerSchema = z.object({

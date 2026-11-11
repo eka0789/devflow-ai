@@ -1,6 +1,5 @@
 /** Cross-project search — ownership-scoped, LIKE-based with escaped wildcards. */
 import { getDb } from '../db/database.js';
-import { requireProject } from './projects.service.js';
 import { toProject, toStory, toTask, type ProjectRow, type StoryRow, type TaskRow } from './mappers.js';
 import type { Project, SearchResults, Story, Task } from '@devflow/shared';
 
@@ -47,14 +46,4 @@ export function searchAll(userId: string, rawQuery: string, limitPerType = 8): S
     stories: storyRows.map(toStory),
     tasks: taskRows.map(toTask),
   };
-}
-
-/** Validates search access to a project (kept for future scoped search). */
-export function canSearchProject(projectId: string, userId: string): boolean {
-  try {
-    requireProject(projectId, userId);
-    return true;
-  } catch {
-    return false;
-  }
 }

@@ -105,6 +105,3 @@ export function lastAuditFor(userId: string, targetType: string, targetId: strin
   return row ? { action: row.action, createdAt: row.created_at, meta: row.meta } : null;
 }
 
-export function auditSnapshot(): string {
-  return nowIso();
-}

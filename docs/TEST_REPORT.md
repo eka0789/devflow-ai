@@ -5,7 +5,7 @@ All results below are from **actually executed** runs on 2026-11-01.
 
 ## 1. Automated suite — `npm test` (vitest, apps/api)
 
-**Result: 7 files, 49 tests — 49 passed, 0 failed.**
+**Result (latest full run): 11 files, 101 tests — 101 passed, 0 failed.**
 
 | File | Tests | Covers |
 |---|---|---|
@@ -16,6 +16,10 @@ All results below are from **actually executed** runs on 2026-11-01.
 | `test/webhooks.test.ts` | 5 | signature rejected without secret, delivery dedupe, PR event → activity + notification, push → activity, HTTP 401 on bad signature, missing headers 400 |
 | `test/agents.test.ts` | 8 | 7-agent registry, full planning workflow → succeeded (3 steps) → 3 drafts → approve creates real records, concurrent-run guard, double-approve rejected, mock provider schema validity + labeling, OpenAI-compatible completion parse, SSE stream parse + usage, provider error mapping, AI settings resolution |
 | `test/chat-execution.test.ts` | 8 | SSE chat end-to-end over HTTP (deltas + done + persistence), `AI_NOT_CONFIGURED` structured stream error, conversation ownership, execution prechecks (all missing items), done-task refusal |
+| `test/review-fixes.test.ts` | 8 | Fleet-review regressions: real-HMAC webhook acceptance, merge guard (draft/CI-fail/happy+audit), execution cross-tenant isolation, auth rate limiting (429), cross-user project PATCH/DELETE |
+| `test/features.test.ts` | 11 | Wave 2–3: global search (incl. wildcard escaping + HTTP scoping), task comments (add/list/delete/author-only), sprint review workflow from frozen metrics, project export snapshot, retry prechecks, dependency/sprint guards, deleteStory cascade |
+| `test/wave3.test.ts` | 15 | Wave 3: workspace roles (viewer 403, stranger 404), invite activation on register, roster, assignee workspace validation, my-work, labels round-trip, @mentions, task timeline, import round-trip + malformed 422, roadmap, outgoing webhooks (fan-out, HMAC signature, honest test endpoint) |
+| `test/ai-parsing.test.ts` | 18 | Provider response parsing: multi-shape completions (canonical/Anthropic/Responses-API/reasoning_content), delta shapes, usage dialects, base-URL normalization |
 
 ## 2. Static verification (executed)
 

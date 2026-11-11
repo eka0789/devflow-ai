@@ -10,6 +10,10 @@
 - **AI planning agents** — 7-agent registry (PM, Architect, Scrum Master, Developer, Code Reviewer, QA, Tech Writer). Multi-step workflows produce a PRD, technical plan and structured backlog proposal — always saved as **drafts** that require your approval before touching real data.
 - **Agile scrum** — epics → stories → tasks → subtasks, story points, priorities, dependencies with cycle detection, sprints with activate/complete lifecycle, kanban board with drag & drop, velocity and burndown computed from real status events.
 - **Centralized state machine** — stories/tasks can only move through valid transitions; dependency gates block forward progress.
+- **Collaboration** — multi-member workspaces with owner/maintainer/viewer roles (invite by email, viewers are read-only), assignees with due dates, colored labels, task comments with @mention notifications, and a cross-project **My Work** view.
+- **Search & roadmap** — global search across projects/stories/tasks (Ctrl+K), and a lightweight Gantt roadmap computed from real epic/sprint dates.
+- **Round-trip portability** — export a project as `devflow-project/v1` JSON and import it back as a fresh project (references remapped, no secrets carried).
+- **Outgoing webhooks** — fan every notification out to Discord, Slack or any HTTP endpoint, HMAC-signed, with per-event filters and a test ping.
 - **AI chat** — streaming (SSE) conversations with project context, persisted history and token usage tracking. Works with any OpenAI-compatible provider configured per-user.
 - **GitHub integration** — PAT-based (encrypted at rest), repository connection, branches/commits/PR views, webhook receiver with HMAC validation and delivery deduplication, PR merge with server-side verification and an immutable audit log.
 - **AI code execution** — pick a task → the pipeline analyzes the repo, generates changes, builds a unified diff, runs tests in an **isolated Docker container** (network-disabled, capability-dropped, read-only rootfs) when Docker is available, commits to a feature branch via the GitHub API, and opens a **draft PR** unless tests pass. Merge always requires explicit human confirmation.
