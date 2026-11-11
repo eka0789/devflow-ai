@@ -75,7 +75,13 @@ export async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Pro
   if (!res.ok) {
     const errBody = (json as ApiErrorBody | null)?.error;
     const code = errBody?.code ?? 'INTERNAL';
-    const message = errBody?.message ?? `Request failed with status ${res.status}`;
+    // a 5xx whose body is not our error envelope means the hop between the
+    // browser and the API failed (proxy down, server restarting) — say so
+    const message =
+      errBody?.message ??
+      (res.status >= 500
+        ? `Cannot reach the server (HTTP ${res.status}) — it may be restarting. Try again shortly.`
+        : `Request failed with status ${res.status}`);
     if (res.status === 401 && code === 'UNAUTHENTICATED') {
       clearToken();
       unauthorizedHandler?.();

@@ -25,11 +25,16 @@ export function RoadmapPage(): JSX.Element {
 
   const rows = useMemo(() => sortRows(data?.items ?? []), [data]);
 
-  // Time window: minDate→maxDate from the API, with a ±30d fallback if the range is unusable.
+  // Time window: minDate→maxDate from the API. A real range is padded so
+  // single-day items stay visible; only a missing/unusable range falls back.
   const { t0, t1 } = useMemo(() => {
     const min = Date.parse(data?.minDate ?? '');
     const max = Date.parse(data?.maxDate ?? '');
-    if (Number.isFinite(min) && Number.isFinite(max) && max > min) return { t0: min, t1: max };
+    if (Number.isFinite(min) && Number.isFinite(max)) {
+      const span = max - min;
+      const pad = span < 14 * DAY_MS ? 7 * DAY_MS : 0; // keep 1-day epics visible
+      return { t0: min - pad, t1: Math.max(max, min) + pad };
+    }
     const now = Date.now();
     return { t0: now - 30 * DAY_MS, t1: now + 30 * DAY_MS };
   }, [data]);
@@ -79,7 +84,11 @@ export function RoadmapPage(): JSX.Element {
           <div className="page-title">Roadmap</div>
           <div className="page-sub">
             Epics and sprints on a timeline
-            {data && data.items.length > 0 ? ` · ${formatDate(data.minDate)} → ${formatDate(data.maxDate)}` : ''}
+            {data && data.items.length > 0
+              ? data.minDate === data.maxDate
+                ? ` · ${formatDate(data.minDate)}`
+                : ` · ${formatDate(data.minDate)} → ${formatDate(data.maxDate)}`
+              : ''}
           </div>
         </div>
       </div>
